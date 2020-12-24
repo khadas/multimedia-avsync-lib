@@ -1,0 +1,5 @@
+config BR2_PACKAGE_AVSYNC_LIB
+        bool "avsync-lib"
+        help
+          AV sync user library based on kernel tsync driver
+          Unit test also provided.
