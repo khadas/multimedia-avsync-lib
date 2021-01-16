@@ -276,6 +276,7 @@ struct vframe *av_sync_pop_frame(void *sync)
     struct av_sync_session *avsync = (struct av_sync_session *)sync;
     int toggle_cnt = 0;
     uint32_t systime;
+    bool pause_pts_reached = false;
 
     pthread_mutex_lock(&avsync->lock);
     if (avsync->state == AV_SYNC_STAT_INIT) {
@@ -381,23 +382,24 @@ struct vframe *av_sync_pop_frame(void *sync)
 
     /* pause pts */
     if (avsync->pause_pts != AV_SYNC_INVALID_PAUSE_PTS && avsync->last_frame) {
-        bool reached;
-
         if (avsync->pause_pts == AV_SYNC_STEP_PAUSE_PTS)
-            reached = true;
+            pause_pts_reached = true;
         else
-            reached = (int)(avsync->last_frame->pts - avsync->pause_pts) >= 0;
+            pause_pts_reached = (int)(avsync->last_frame->pts - avsync->pause_pts) >= 0;
+    } else if (avsync->pause_pts != AV_SYNC_INVALID_PAUSE_PTS) {
+        if (!peek_item(avsync->frame_q, (void **)&frame, 0))
+            pause_pts_reached = (int)(frame->pts - avsync->pause_pts) >= 0;
+    }
 
-        if (reached) {
-            if (avsync->pause_pts_cb)
-                avsync->pause_pts_cb(avsync->last_frame->pts,
+    if (pause_pts_reached) {
+        if (avsync->pause_pts_cb)
+            avsync->pause_pts_cb(avsync->pause_pts,
                     avsync->pause_cb_priv);
 
-            /* stay in paused until av_sync_pause(false) */
-            avsync->paused = true;
-            avsync->pause_pts = AV_SYNC_INVALID_PAUSE_PTS;
-            log_info ("reach pause pts: %u", avsync->last_frame->pts);
-        }
+        /* stay in paused until av_sync_pause(false) */
+        avsync->paused = true;
+        avsync->pause_pts = AV_SYNC_INVALID_PAUSE_PTS;
+        log_info ("reach pause pts: %u", avsync->last_frame->pts);
     }
 
 exit:
@@ -643,6 +645,7 @@ int av_sync_set_pause_pts(void *sync, pts90K pts)
       return -1;
 
     avsync->pause_pts = pts;
+    log_info("set pause pts: %u", pts);
     return 0;
 }
 
