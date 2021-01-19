@@ -73,12 +73,18 @@ struct  av_sync_session {
     pts90K pause_pts;
     pause_pts_done pause_pts_cb;
     void *pause_cb_priv;
+
+    /* log control */
+    uint32_t last_systime;
+    uint32_t sync_lost_cnt;
+    struct timeval sync_lost_print_time;
 };
 
 #define MAX_FRAME_NUM 32
 #define DEFAULT_START_THRESHOLD 2
 #define TIME_UNIT90K    (90000)
 #define AV_DISCONTINUE_THREDHOLD_MIN (TIME_UNIT90K * 3)
+#define SYNC_LOST_PRINT_THRESHOLD 10000000 //10 seconds In micro seconds
 
 static uint64_t time_diff (struct timeval *b, struct timeval *a);
 static bool frame_expire(struct av_sync_session* avsync,
@@ -376,6 +382,7 @@ struct vframe *av_sync_pop_frame(void *sync)
                 log_info("first frame %u", frame->pts);
             }
             avsync->last_frame = frame;
+            avsync->last_pts = frame->pts;
         } else
             break;
     }
@@ -511,7 +518,20 @@ static bool frame_expire(struct av_sync_session* avsync,
         if (avsync->paused && avsync->mode != AV_SYNC_MODE_PCR_MASTER)
             return false;
 
-        log_warn("sync lost systime:%x fpts:%x", systime, fpts);
+        if (avsync->last_systime != systime || avsync->last_pts != fpts) {
+            struct timeval now;
+
+            gettimeofday(&now, NULL);
+            avsync->last_systime = systime;
+            avsync->last_pts = fpts;
+            if (time_diff(&now, &avsync->sync_lost_print_time) >=
+                SYNC_LOST_PRINT_THRESHOLD) {
+                log_warn("sync lost systime:%x fpts:%x lost:%u",
+                    systime, fpts, avsync->sync_lost_cnt);
+                avsync->sync_lost_cnt = 0;
+            } else
+                avsync->sync_lost_cnt++;
+        }
         avsync->state = AV_SYNC_STAT_SYNC_LOST;
         avsync->phase_set = false;
         if ((int)(systime - fpts) > 0) {
@@ -580,6 +600,7 @@ static bool frame_expire(struct av_sync_session* avsync,
         if (avsync->state != AV_SYNC_STAT_SYNC_SETUP)
             log_info("sync setup");
         avsync->state = AV_SYNC_STAT_SYNC_SETUP;
+        avsync->sync_lost_cnt = 0;
     }
     return expire;
 }
