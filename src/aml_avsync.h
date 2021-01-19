@@ -20,6 +20,26 @@ enum sync_mode {
     AV_SYNC_MODE_VMASTER = 0,
     AV_SYNC_MODE_AMASTER = 1,
     AV_SYNC_MODE_PCR_MASTER = 2,
+    AV_SYNC_MODE_IPTV = 3,
+    AV_SYNC_MODE_FREE_RUN = 4,
+    AV_SYNC_MODE_MAX
+};
+
+enum sync_type {
+    AV_SYNC_TYPE_AUDIO,
+    AV_SYNC_TYPE_VIDEO,
+    AV_SYNC_TYPE_PCR,
+    AV_SYNC_TYPE_MAX
+};
+
+enum sync_start_policy {
+    AV_SYNC_START_NONE = 0,
+    AV_SYNC_START_V_FIRST = 1,
+    AV_SYNC_START_A_FIRST = 2,
+    AV_SYNC_START_ASAP = 3,
+    AV_SYNC_START_ALIGN = 4,
+    AV_SYNC_START_V_PEEK = 5,
+    AV_SYNC_START_MAX
 };
 
 #define AV_SYNC_INVALID_PAUSE_PTS 0xFFFFFFFF
@@ -29,6 +49,40 @@ typedef uint32_t pts90K;
 struct vframe;
 typedef void (*free_frame)(struct vframe * frame);
 typedef void (*pause_pts_done)(uint32_t pts, void* priv);
+
+typedef enum {
+    /* good to render */
+    AV_SYNC_ASCB_OK,
+    /* triggered by av_sync_destroy */
+    AV_SYNC_ASCB_STOP,
+} avs_ascb_reason;
+
+typedef int (*audio_start_cb)(void *priv, avs_ascb_reason reason);
+
+typedef enum {
+    AV_SYNC_ASTART_SYNC = 0,
+    AV_SYNC_ASTART_ASYNC,
+    AV_SYNC_ASTART_ERR
+} avs_start_ret;
+
+typedef enum {
+    /* render ASAP */
+    AV_SYNC_AA_RENDER,
+    /* late, drop to catch up */
+    AV_SYNC_AA_DROP,
+    /* early, insert to hold */
+    AV_SYNC_AA_INSERT,
+    AA_SYNC_AA_MAX
+} avs_audio_action;
+
+struct audio_policy {
+    avs_audio_action action;
+    /* delta between apts and ideal render position
+     * positive means apts is behind wall clock
+     * negative means apts is ahead of wall clock
+     */
+    int delta;
+};
 
 struct vframe {
     /* private user data */
@@ -50,30 +104,88 @@ struct vframe {
     int hold_period;
 };
 
-/* create and attach to kernel session. The returned avsync module will
- * associated with @session_id.
+struct video_config {
+    /* AV sync delay. The delay of render.
+     * For video in VSYNC number unit:
+     * 2 for video planes
+     * 1 for osd planes
+     */
+    int delay;
+};
+
+/* Open a new session and create the ID
+ * Params:
+ *   @session_id: session ID allocated if success
+ * Return:
+ *   >= 0 session handle. session_id is valid
+ *   < 0 error, session_id is invalid
+ */
+int av_sync_open_session(int *session_id);
+
+/* Close session, will also decrease the ref cnt of session ID.
+ * Params:
+ *   @session: Av sync session handle
+ */
+void av_sync_close_session(int session);
+
+/* Attach to kernel session. The returned avsync module will
+ * associated with @session_id. It is valid to create multi instance
+ * with the same session_id. For example, one for video, one for audio,
+ * one for PCR. But it is NOT valid to create 2 video session with the
+ * same session_id. Create session will increase the ref count of session
+ * ID.
  * Params:
  *   @session_id: unique AV sync session ID to bind audio and video
  *               usually get from kernel driver.
  *   @mode: AV sync mode of enum sync_mode
+ *   @type: AV sync type of enum sync_type. For a stream with both
+ *          video and audio, two instances with each type should be created.
  *   @start_thres: The start threshold of AV sync module. Set it to 0 for
  *               a default value. For low latency mode, set it to 1. Bigger
- *               value will increase the delay of the first frame shown.
+ *               value will increase the delay of the first frame rendered.
  *               AV sync will start when frame number reached threshold.
- *   @delay: AV sync delay number. The delay of display pipeline.
- *           2 for video planes
- *           1 for osd planes
- *   @vsync_interval: Interval of VSYNC, in uint of 90K.
  * Return:
  *   null for failure, or handle for avsync module.
  */
 void* av_sync_create(int session_id,
                      enum sync_mode mode,
-                     int start_thres,
-                     int delay,
-                     pts90K vsync_interval);
+                     enum sync_type type,
+                     int start_thres);
 
+
+/* Attach to an existed session. The returned avsync module will
+ * associated with @session_id. use av_sync_destroy to destroy it.
+ * Designed for audio path for now. Session created by audio client,
+ * and attached by audio HAL. Attach sesson will increase the ref count of
+ * session ID.
+ * Params:
+ *   @session_id: unique AV sync session ID to bind audio and video
+ *               usually get from kernel driver.
+ *   @type: AV sync type of enum sync_type. For a stream with both
+ *          video and audio, two instances with each type should be created.
+ * Return:
+ *   null for failure, or handle for avsync module.
+ */
+
+void* av_sync_attach(int session_id,
+                     enum sync_type type);
+
+/* Dettach from existed session. Decrease the ref count of session ID
+ * Params:
+ *   @sync: handle for avsync module
+ */
 void av_sync_destroy(void *sync);
+
+int av_sync_video_config(void *sync, struct video_config* config);
+
+/* Set start policy
+ * Params:
+ *   @sync: AV sync module handle
+ *   @policy: start policy
+ * Return:
+ *   0 for OK, or error code
+ */
+int avs_sync_set_start_policy(void *sync, enum sync_start_policy policy);
 
 /* Pause/Resume AV sync module.
  * It will return last frame in @av_sync_pop_frame() in pause state
@@ -85,7 +197,7 @@ void av_sync_destroy(void *sync);
  */
 int av_sync_pause(void *sync, bool pause);
 
-/* Push a new frame to AV sync module
+/* Push a new video frame to AV sync module
  * Params:
  *   @sync: AV sync module handle
  * Return:
@@ -103,13 +215,39 @@ int av_sync_push_frame(void *sync , struct vframe *frame);
  * */
 struct vframe *av_sync_pop_frame(void *sync);
 
-/* notify a change in display refresh rate
- * All AV phase/rate logic will be reset
+/* Audio start control. Audio render need to check return value and
+ * do sync or async start.
  * Params:
  *   @sync: AV sync module handle
- *   @vsync_interval: Interval of VSYNC, in uint of 90K.
+ *   @pts: first audio pts
+ *   @delay: rendering delay
+ *   @cb: callback to notify rendering start.
+ *   @priv: parameter for cb
+ * Return:
+ *   AV_SYNC_ASTART_SYNC, audio can start render ASAP. No need to wait for callback.
+ *   AV_SYNC_ASTART_ASYNC, audio need to block until callback is triggered.
+ *   AV_SYNC_ASTART_ERR, something bad happens
  */
-void av_sync_update_vsync_interval(void *sync, pts90K vsync_interval);
+avs_start_ret av_sync_audio_start(
+    void *sync,
+    pts90K pts,
+    pts90K delay,
+    audio_start_cb cb,
+    void *priv);
+
+/* Audio render policy. Indicate render action and the difference from ideal position
+ * Params:
+ *   @sync: AV sync module handle
+ *   @pts: curent audio pts (considering delay)
+ *   @policy: action field indicates the action.
+ *            delta field indicates the diff from ideal position
+ * Return:
+ *   0 for OK, or error code
+ */
+int av_sync_audio_render(
+    void *sync,
+    pts90K pts,
+    struct audio_policy *policy);
 
 /* set playback speed
  * Currently only work for VMASTER mode
@@ -123,7 +261,7 @@ void av_sync_update_vsync_interval(void *sync, pts90K vsync_interval);
 int av_sync_set_speed(void *sync, float speed);
 
 /* switch avsync mode
- * Only from Vmaster to Amaster is supported
+ * PCR master/IPTV handle mode change automatically
  * Params:
  *   @sync: AV sync module handle
  *   @sync_mode: new mode
@@ -159,4 +297,35 @@ int av_sync_set_pause_pts(void *sync, pts90K pts);
  *   0 for OK, or error code
  */
 int av_sync_set_pause_pts_cb(void *sync, pause_pts_done cb, void *priv);
+
+/* Update PCR clock.
+ * Use by AV_SYNC_TYPE_PCR only.
+ * Params:
+ *   @sync: AV sync module handle
+ *   @pts: PCR clock
+ * Return:
+ *   0 for OK, or error code
+ */
+int av_sync_set_pcr_clock(void *sync, pts90K pts);
+
+int av_sync_get_pcr_clock(void *sync, pts90K *pts);
+
+/* get wall clock
+ * Params:
+ *   @sync: AV sync module handle
+ *   @pts: return wall clock
+ * Return:
+ *   0 for OK, or error code
+ */
+int av_sync_get_clock(void *sync, pts90K *pts);
+
+/* set session name for debugging purpose
+ * The session name will be listed from /sys/class/aml_msync/list_session
+ * Params:
+ *   @sync: AV sync module handle
+ *   @name: name of current session.
+ * Return:
+ *   0 for OK, or error code
+ */
+int av_sync_set_session_name(void *sync, const char *name);
 #endif
