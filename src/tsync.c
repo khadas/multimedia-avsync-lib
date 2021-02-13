@@ -191,6 +191,9 @@ int tsync_disable_video_stop_event(int session, bool disable)
 
 int tsync_set_speed(int session, float speed)
 {
+    if (speed == 1.0f)
+        return video_device_ioctl(AMSTREAM_IOC_SET_VSYNC_SLOW_FACTOR, 1);
+
     return video_device_ioctl(AMSTREAM_IOC_SET_VSYNC_SLOW_FACTOR, 1000000 * speed);
 }
 
