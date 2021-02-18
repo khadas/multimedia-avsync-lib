@@ -204,8 +204,10 @@ void av_sync_destroy(void *sync)
         internal_stop(avsync);
 
     /* all frames are freed */
-    if (avsync->session_id != 1)
+    if (avsync->session_id != 1) {
         tsync_set_pts_inc_mode(avsync->session_id, false);
+        tsync_send_video_stop(avsync->session_id);
+    }
 
     pthread_mutex_destroy(&avsync->lock);
     destroy_q(avsync->frame_q);

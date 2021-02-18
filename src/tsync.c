@@ -107,6 +107,12 @@ int tsync_send_video_start(int session, uint32_t vpts)
     return config_sys_node(TSYNC_EVENT, val);
 }
 
+int tsync_send_video_stop(int session)
+{
+    log_info("%s");
+    return config_sys_node(TSYNC_EVENT, "VIDEO_STOP");
+}
+
 int tsync_send_video_pause(int session, bool pause)
 {
     const char *val;
