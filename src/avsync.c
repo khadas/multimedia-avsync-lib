@@ -178,13 +178,9 @@ static int internal_stop(struct av_sync_session *avsync)
     struct vframe *frame;
 
     pthread_mutex_lock(&avsync->lock);
-    if (avsync->state == AV_SYNC_STAT_INIT)
-        goto exit;
-
     while (!dqueue_item(avsync->frame_q, (void **)&frame)) {
         frame->free(frame);
     }
-
     avsync->state = AV_SYNC_STAT_INIT;
 exit:
     pthread_mutex_unlock(&avsync->lock);
