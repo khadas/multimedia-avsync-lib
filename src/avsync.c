@@ -527,6 +527,7 @@ static bool frame_expire(struct av_sync_session* avsync,
                 log_warn("sync lost systime:%x fpts:%x lost:%u",
                     systime, fpts, avsync->sync_lost_cnt);
                 avsync->sync_lost_cnt = 0;
+                gettimeofday(&avsync->sync_lost_print_time, NULL);
             } else
                 avsync->sync_lost_cnt++;
         }
