@@ -182,7 +182,6 @@ static int internal_stop(struct av_sync_session *avsync)
         frame->free(frame);
     }
     avsync->state = AV_SYNC_STAT_INIT;
-exit:
     pthread_mutex_unlock(&avsync->lock);
     return ret;
 }
@@ -533,6 +532,7 @@ static bool frame_expire(struct av_sync_session* avsync,
         }
         avsync->state = AV_SYNC_STAT_SYNC_LOST;
         avsync->phase_set = false;
+        reset_pattern(avsync->pattern_detector);
         if ((int)(systime - fpts) > 0) {
             if (frame->pts && avsync->mode == AV_SYNC_MODE_VMASTER)
                 tsync_send_video_disc(avsync->session_id, frame->pts);
@@ -569,10 +569,11 @@ static bool frame_expire(struct av_sync_session* avsync,
         }
     }
 
-    correct_pattern(avsync->pattern_detector, frame, next_frame,
-            (avsync->last_frame?avsync->last_frame->hold_period:0),
-            avsync->last_holding_peroid, systime,
-            avsync->vsync_interval, &expire);
+    if (avsync->state == AV_SYNC_STAT_SYNC_SETUP)
+        correct_pattern(avsync->pattern_detector, frame, next_frame,
+                (avsync->last_frame?avsync->last_frame->hold_period:0),
+                avsync->last_holding_peroid, systime,
+                avsync->vsync_interval, &expire);
 
     if (expire) {
         avsync->vpts = fpts;
