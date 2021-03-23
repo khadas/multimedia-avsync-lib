@@ -195,8 +195,7 @@ void av_sync_destroy(void *sync)
         return;
 
     log_info("begin");
-    if (avsync->state != AV_SYNC_STAT_INIT)
-        internal_stop(avsync);
+    internal_stop(avsync);
 
     /* all frames are freed */
     if (avsync->session_id != 1) {
