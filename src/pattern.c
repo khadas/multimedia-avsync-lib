@@ -20,8 +20,10 @@
 #define PATTERN_32_D_RANGE 10
 #define PATTERN_22_D_RANGE 10
 #define PATTERN_41_D_RANGE 2
+#define PATTERN_11_D_RANGE 10
 #define PATTERN_32_DURATION 3750
 #define PATTERN_22_DURATION 3000
+#define PATTERN_11_DURATION 1500
 
 struct pattern_detector {
     int match_cnt[AV_SYNC_FRAME_PMAX];
@@ -119,6 +121,15 @@ void correct_pattern(void* handle, struct vframe *frame, struct vframe *nextfram
             break;
         case AV_SYNC_FRAME_P41:
             /* TODO */
+        case AV_SYNC_FRAME_P11:
+            if (last_peroid != 1)
+                goto exit;
+            pattern_range =  PATTERN_11_D_RANGE;
+            expected_prev_interval = 1;
+            expected_cur_peroid = 1;
+            if (!npts)
+                npts = frame->pts + PATTERN_11_DURATION;
+            break;
         default:
             goto exit;
     }
@@ -170,13 +181,14 @@ exit:
     pthread_mutex_unlock(&pd->lock);
 }
 
-void detect_pattern(void* handle, enum frame_pattern pattern, int cur_peroid, int last_peroid)
+bool detect_pattern(void* handle, enum frame_pattern pattern, int cur_peroid, int last_peroid)
 {
     struct pattern_detector *pd = (struct pattern_detector *)handle;
     int factor1 = 0, factor2 = 0, range = 0;
+    bool ret = false;
 
     if (!pd || pattern >= AV_SYNC_FRAME_PMAX)
-        return;
+        return ret;
 
     pthread_mutex_lock(&pd->lock);
     if (pattern == AV_SYNC_FRAME_P32) {
@@ -229,9 +241,13 @@ void detect_pattern(void* handle, enum frame_pattern pattern, int cur_peroid, in
             memset(&pd->pattern_41[0], 0, sizeof(pd->pattern_41));
         }
         goto exit;
+    } else if (pattern == AV_SYNC_FRAME_P11) {
+        factor1 = 1;
+        factor2 = 1;
+        range =  PATTERN_11_D_RANGE;
     }
 
-    /* update 3:2 or 2:2 mode detection */
+    /* update 1:1 3:2 or 2:2 mode detection */
     if (((last_peroid == factor1) && (cur_peroid == factor2)) ||
             ((last_peroid == factor2) && (cur_peroid == factor1))) {
         if (pd->match_cnt[pattern] < range) {
@@ -239,16 +255,20 @@ void detect_pattern(void* handle, enum frame_pattern pattern, int cur_peroid, in
             if (pd->match_cnt[pattern] == range) {
                 pd->enter_cnt[pattern]++;
                 pd->detected = pattern;
-                log_info("video %d:%d mode detected", factor1, factor2);
+                log_info("video %d:%d mode detected cnt %d", factor1, factor2,
+                         pd->enter_cnt[pattern]);
             }
         }
     } else if (pd->match_cnt[pattern] == range) {
         pd->match_cnt[pattern] = 0;
         pd->exit_cnt[pattern]++;
-        log_info("video %d:%d mode broken", factor1, factor2);
+        log_info("video %d:%d mode broken by %d:%d cnt %d", factor1, factor2,
+                 last_peroid, cur_peroid, pd->exit_cnt[pattern]);
+        ret = true;
     } else
         pd->match_cnt[pattern] = 0;
 
 exit:
     pthread_mutex_unlock(&pd->lock);
+    return ret;
 }

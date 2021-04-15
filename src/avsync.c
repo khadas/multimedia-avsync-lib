@@ -107,6 +107,9 @@ struct  av_sync_session {
     /* pcr master, IPTV only */
     bool quit_poll;
     enum sync_mode active_mode;
+
+    /* error detection */
+    uint32_t last_poptime;
 };
 
 #define MAX_FRAME_NUM 32
@@ -123,7 +126,7 @@ static bool frame_expire(struct av_sync_session* avsync,
         struct vframe * frame,
         struct vframe * next_frame,
         int toggle_cnt);
-static void pattern_detect(struct av_sync_session* avsync,
+static bool pattern_detect(struct av_sync_session* avsync,
         int cur_period,
         int last_period);
 static void * poll_thread(void * arg);
@@ -435,13 +438,17 @@ struct vframe *av_sync_pop_frame(void *sync)
     }
 
     if (!avsync->session_started) {
+        uint32_t pts;
+
         if (peek_item(avsync->frame_q, (void **)&frame, 0) || !frame) {
             log_info("[%d]empty q", avsync->session_id);
             goto exit;
         }
-        msync_session_set_video_start(avsync->fd, frame->pts);
+        msync_session_get_wall(avsync->fd, &systime, &interval);
+        pts = frame->pts - avsync->delay * interval;
+        msync_session_set_video_start(avsync->fd, pts);
         avsync->session_started = true;
-        log_info("[%d]video start %u", avsync->session_id, frame->pts);
+        log_info("[%d]video start %u", avsync->session_id, pts);
     }
 
     if (avsync->start_policy == AV_SYNC_START_ALIGN &&
@@ -474,9 +481,11 @@ struct vframe *av_sync_pop_frame(void *sync)
             log_debug("[%d]cur_f %u expire", avsync->session_id, frame->pts);
             toggle_cnt++;
 
-            pattern_detect(avsync,
+            if (pattern_detect(avsync,
                     (avsync->last_frame?avsync->last_frame->hold_period:0),
-                    avsync->last_holding_peroid);
+                    avsync->last_holding_peroid))
+                log_info("[%d] %u break the pattern", avsync->session_id, avsync->last_frame->pts);
+
             if (avsync->last_frame)
                 avsync->last_holding_peroid = avsync->last_frame->hold_period;
 
@@ -484,7 +493,8 @@ struct vframe *av_sync_pop_frame(void *sync)
             if (avsync->last_frame) {
                 /* free frame that are not for display */
                 if (toggle_cnt > 1) {
-                    log_debug("[%d]free %u", avsync->session_id, avsync->last_frame->pts);
+                    log_debug("[%d]free %u cur %u system/d %u/%u", avsync->session_id,
+                             avsync->last_frame->pts, frame->pts, systime, systime - avsync->last_poptime);
                     avsync->last_frame->free(avsync->last_frame);
                 }
             } else {
@@ -525,12 +535,14 @@ exit:
     if (avsync->last_frame) {
         if (enter_last_frame != avsync->last_frame)
             log_debug("[%d]pop %u", avsync->session_id, avsync->last_frame->pts);
+        log_trace("[%d]pop %u", avsync->session_id, avsync->last_frame->pts);
         msync_session_update_vpts(avsync->fd, systime,
             avsync->last_frame->pts, interval * avsync->delay);
     } else
         if (enter_last_frame != avsync->last_frame)
             log_debug("[%d]pop (nil)", avsync->session_id);
 
+    avsync->last_poptime = systime;
     if (avsync->last_frame)
         avsync->last_frame->hold_period++;
     return avsync->last_frame;
@@ -577,9 +589,9 @@ static bool frame_expire(struct av_sync_session* avsync,
     if (avsync->phase_set)
         systime += avsync->phase;
 
-    log_trace("[%d]systime:%u phase:%u correct:%u",
+    log_trace("[%d]systime:%u phase:%u correct:%u fpts:%u",
             avsync->session_id, systime,
-            avsync->phase_set?avsync->phase:0, pts_correction);
+            avsync->phase_set?avsync->phase:0, pts_correction, fpts);
     if (abs_diff(systime, fpts) > AV_DISCONTINUE_THREDHOLD_MIN &&
             avsync->first_frame_toggled) {
         /* ignore discontinity under pause */
@@ -630,14 +642,13 @@ static bool frame_expire(struct av_sync_session* avsync,
         /* multi frame expired in current vsync but no frame in next vsync */
         if (systime + interval < next_frame->pts) {
             expire = false;
-            frame->hold_period++;
             log_debug("[%d]unset expire systime:%d inter:%d next_pts:%d toggle_cnt:%d",
                     avsync->session_id, systime, interval, next_frame->pts, toggle_cnt);
         }
     } else if (!expire && next_frame && next_frame->pts && !toggle_cnt
                && avsync->first_frame_toggled) {
         /* next vsync will have at least 2 frame expired */
-        if (systime + interval > next_frame->pts) {
+        if (systime + interval >= next_frame->pts) {
             expire = true;
             log_debug("[%d]set expire systime:%d inter:%d next_pts:%d",
                     avsync->session_id, systime, interval, next_frame->pts);
@@ -679,13 +690,21 @@ static bool frame_expire(struct av_sync_session* avsync,
     return expire;
 }
 
-static void pattern_detect(struct av_sync_session* avsync, int cur_period, int last_period)
+static bool pattern_detect(struct av_sync_session* avsync, int cur_period, int last_period)
 {
+    bool ret = false;
     log_trace("[%d]cur_period: %d last_period: %d",
             avsync->session_id, cur_period, last_period);
-    detect_pattern(avsync->pattern_detector, AV_SYNC_FRAME_P32, cur_period, last_period);
-    detect_pattern(avsync->pattern_detector, AV_SYNC_FRAME_P22, cur_period, last_period);
-    detect_pattern(avsync->pattern_detector, AV_SYNC_FRAME_P41, cur_period, last_period);
+    if (detect_pattern(avsync->pattern_detector, AV_SYNC_FRAME_P32, cur_period, last_period))
+        ret = true;
+    if (detect_pattern(avsync->pattern_detector, AV_SYNC_FRAME_P22, cur_period, last_period))
+        ret = true;
+    if (detect_pattern(avsync->pattern_detector, AV_SYNC_FRAME_P41, cur_period, last_period))
+        ret = true;
+    if (detect_pattern(avsync->pattern_detector, AV_SYNC_FRAME_P11, cur_period, last_period))
+        ret = true;
+
+    return ret;
 }
 
 int av_sync_set_speed(void *sync, float speed)
