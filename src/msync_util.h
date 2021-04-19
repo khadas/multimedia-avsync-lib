@@ -38,7 +38,8 @@ int msync_session_update_vpts(int fd, uint32_t system, uint32_t pts, uint32_t de
 int msync_session_update_apts(int fd, uint32_t system, uint32_t pts, uint32_t delay);
 int msync_session_set_audio_stop(int fd);
 int msync_session_set_video_stop(int fd);
-int msync_session_get_stat (int fd, enum sync_mode *mode, bool *v_active, bool *a_active);
+int msync_session_get_stat (int fd, enum sync_mode *mode,
+        bool *v_active, bool *a_active, bool *v_timeout);
 bool msync_clock_started(int fd);
 int msync_session_set_pcr(int fd, pts90K pts);
 int msync_session_get_pcr(int fd, pts90K *pts);

@@ -281,7 +281,8 @@ int msync_session_set_video_stop(int fd)
     return msync_session_set_event(fd, AVS_VIDEO_STOP, 0);
 }
 
-int msync_session_get_stat (int fd, enum sync_mode *mode, bool *v_active, bool *a_active)
+int msync_session_get_stat (int fd, enum sync_mode *mode,
+        bool *v_active, bool *a_active, bool *v_timeout)
 {
     int rc;
     struct session_sync_stat stat;
@@ -313,6 +314,8 @@ int msync_session_get_stat (int fd, enum sync_mode *mode, bool *v_active, bool *
         *v_active = stat.v_active;
     if (a_active)
         *a_active = stat.a_active;
+    if (v_timeout)
+        *v_timeout = stat.v_timeout;
 
     return rc;
 }

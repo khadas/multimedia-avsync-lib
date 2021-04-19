@@ -913,16 +913,18 @@ int av_sync_get_clock(void *sync, pts90K *pts)
 }
 
 static void handle_mode_change_a(struct av_sync_session* avsync,
-    bool v_active, bool a_active)
+    bool v_active, bool a_active, bool v_timeout)
 {
-    log_info("[%d]amode %d mode %d v/a %d/%d", avsync->session_id,
-            avsync->active_mode, avsync->mode, v_active, a_active);
+    log_info("[%d]amode %d mode %d v/a/vt %d/%d/%d", avsync->session_id,
+            avsync->active_mode, avsync->mode, v_active, a_active, v_timeout);
     if (avsync->active_mode == AV_SYNC_MODE_AMASTER) {
         float speed;
         if (avsync->start_policy == AV_SYNC_START_ALIGN &&
-                avsync->audio_start) {
-            log_info("audio start cb");
-            trigger_audio_start_cb(avsync, AV_SYNC_ASCB_OK);
+                a_active && avsync->audio_start) {
+            if (v_active || v_timeout) {
+                log_info("audio start cb");
+                trigger_audio_start_cb(avsync, AV_SYNC_ASCB_OK);
+	    }
         }
 
         if (!msync_session_get_rate(avsync->fd, &speed)) {
@@ -945,7 +947,7 @@ static void handle_mode_change_a(struct av_sync_session* avsync,
 }
 
 static void handle_mode_change_v(struct av_sync_session* avsync,
-    bool v_active, bool a_active)
+    bool v_active, bool a_active, bool v_timeout)
 {
     log_info("[%d]amode mode %d %d v/a %d/%d", avsync->session_id,
             avsync->active_mode, avsync->mode, v_active, a_active);
@@ -981,15 +983,15 @@ static void * poll_thread(void * arg)
 
         /* mode change */
         if (pfd.revents & POLLPRI) {
-            bool v_active, a_active;
+            bool v_active, a_active, v_timeout;
 
             msync_session_get_stat(fd, &avsync->active_mode,
-                &v_active, &a_active);
+                &v_active, &a_active, &v_timeout);
 
             if (avsync->type == AV_SYNC_TYPE_AUDIO)
-                handle_mode_change_a(avsync, v_active, a_active);
+                handle_mode_change_a(avsync, v_active, a_active, v_timeout);
             else if (avsync->type == AV_SYNC_TYPE_VIDEO)
-                handle_mode_change_v(avsync, v_active, a_active);
+                handle_mode_change_v(avsync, v_active, a_active, v_timeout);
         }
     }
 exit:
