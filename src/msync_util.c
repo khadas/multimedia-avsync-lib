@@ -332,11 +332,13 @@ bool msync_clock_started(int fd)
     return start != 0;
 }
 
-int msync_session_set_pcr(int fd, pts90K pts)
+int msync_session_set_pcr(int fd, pts90K pts, uint64_t mono_clock)
 {
     int rc;
-    uint32_t pcr = pts;
+    struct pcr_pair pcr;
 
+    pcr.pts = pts;
+    pcr.mono_clock = mono_clock;
     rc = ioctl(fd, AMSYNCS_IOC_SET_PCR, &pcr);
     if (rc)
         log_error("session[%d] set pcr %u errno:%d", fd, pcr, errno);
@@ -344,16 +346,29 @@ int msync_session_set_pcr(int fd, pts90K pts)
     return rc;
 }
 
-int msync_session_get_pcr(int fd, pts90K *pts)
+int msync_session_get_pcr(int fd, pts90K *pts, uint64_t *mono_clock)
 {
     int rc;
-    uint32_t pcr;
+    struct pcr_pair pcr;
 
     rc = ioctl(fd, AMSYNCS_IOC_GET_PCR, &pcr);
     if (rc)
         log_error("session[%d] set pcr %u errno:%d", fd, pcr, errno);
-    else
-        *pts = pcr;
+    else {
+        *pts = pcr.pts;
+        *mono_clock = pcr.mono_clock;
+    }
+
+    return rc;
+}
+
+int msync_session_get_debug_mode(int fd, struct session_debug *debug)
+{
+    int rc;
+
+    rc = ioctl(fd, AMSYNCS_IOC_GET_DEBUG_MODE, debug);
+    if (rc)
+        log_error("session[%d] set debug mode errno:%d", fd, errno);
 
     return rc;
 }

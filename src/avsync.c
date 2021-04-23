@@ -85,14 +85,6 @@ struct  av_sync_session {
 
     float speed;
 
-#if 0
-    /*pip sync, remove after multi instance is supported*/
-    struct timeval base_sys_time;
-    struct timeval pause_start;
-    uint64_t pause_duration;
-    pts90K first_pts;
-#endif
-
     /* pause pts */
     pts90K pause_pts;
     pause_pts_done pause_pts_cb;
@@ -110,14 +102,20 @@ struct  av_sync_session {
 
     /* error detection */
     uint32_t last_poptime;
+    uint32_t outlier_cnt;
 };
 
 #define MAX_FRAME_NUM 32
 #define DEFAULT_START_THRESHOLD 2
 #define TIME_UNIT90K    (90000)
-#define AV_DISCONTINUE_THREDHOLD_MIN (TIME_UNIT90K / 3)
-#define A_ADJ_THREDHOLD (TIME_UNIT90K/10)
+#define AV_DISC_THRES_MIN (TIME_UNIT90K * 3)
+#define A_ADJ_THREDHOLD_HB (TIME_UNIT90K/10)
+#define A_ADJ_THREDHOLD_LB (TIME_UNIT90K/40)
 #define SYNC_LOST_PRINT_THRESHOLD 10000000 //10 seconds In micro seconds
+#define LIVE_MODE(mode) ((mode) == AV_SYNC_MODE_PCR_MASTER || (mode) == AV_SYNC_MODE_IPTV)
+
+#define STREAM_DISC_THRES (TIME_UNIT90K * 10)
+#define OUTLIER_MAX_CNT 8
 
 static uint64_t time_diff (struct timeval *b, struct timeval *a);
 static bool frame_expire(struct av_sync_session* avsync,
@@ -400,7 +398,7 @@ int av_sync_push_frame(void *sync , struct vframe *frame)
     }
 
     if (!peek_item(avsync->frame_q, (void **)&prev, 0)) {
-        if (prev->pts == frame->pts) {
+        if (prev->pts == frame->pts && avsync->mode == AV_SYNC_MODE_AMASTER) {
             dqueue_item(avsync->frame_q, (void **)&prev);
             prev->free(prev);
             log_info ("[%d]drop frame with same pts %u", avsync->session_id, frame->pts);
@@ -433,7 +431,7 @@ struct vframe *av_sync_pop_frame(void *sync)
 
     pthread_mutex_lock(&avsync->lock);
     if (avsync->state == AV_SYNC_STAT_INIT) {
-        log_trace("[%d]in state INIT", avsync->session_id);
+        log_info("[%d]in state INIT", avsync->session_id);
         goto exit;
     }
 
@@ -569,6 +567,9 @@ static bool frame_expire(struct av_sync_session* avsync,
     bool expire = false;
     uint32_t pts_correction = avsync->delay * interval;
 
+    if (avsync->mode == AV_SYNC_MODE_FREE_RUN)
+        return true;
+
     if (avsync->paused && avsync->pause_pts == AV_SYNC_INVALID_PAUSE_PTS)
         return false;
 
@@ -592,7 +593,7 @@ static bool frame_expire(struct av_sync_session* avsync,
     log_trace("[%d]systime:%u phase:%u correct:%u fpts:%u",
             avsync->session_id, systime,
             avsync->phase_set?avsync->phase:0, pts_correction, fpts);
-    if (abs_diff(systime, fpts) > AV_DISCONTINUE_THREDHOLD_MIN &&
+    if (abs_diff(systime, fpts) > AV_DISC_THRES_MIN &&
             avsync->first_frame_toggled) {
         /* ignore discontinity under pause */
         if (avsync->paused)
@@ -613,25 +614,36 @@ static bool frame_expire(struct av_sync_session* avsync,
             } else
                 avsync->sync_lost_cnt++;
         }
+
+        if (avsync->state == AV_SYNC_STAT_SYNC_SETUP &&
+                LIVE_MODE(avsync->mode) &&
+                abs_diff(systime, fpts) > STREAM_DISC_THRES) {
+            /* outlier by stream error */
+            avsync->outlier_cnt++;
+            if (avsync->outlier_cnt < OUTLIER_MAX_CNT) {
+                log_info("render outlier %u", fpts);
+                return true;
+            }
+        }
+
+        avsync->outlier_cnt = 0;
         avsync->state = AV_SYNC_STAT_SYNC_LOST;
         avsync->phase_set = false;
         reset_pattern(avsync->pattern_detector);
         if ((int)(systime - fpts) > 0) {
-            if (frame->pts && avsync->mode == AV_SYNC_MODE_VMASTER) {
+            if (LIVE_MODE(avsync->mode)) {
                 log_info ("[%d]video disc %u --> %u",
                     avsync->session_id, systime, fpts);
                 msync_session_set_video_dis(avsync->fd, frame->pts);
             }
-            /*catch up PCR */
+            /* catch up PCR */
             return true;
-        } else if (avsync->mode == AV_SYNC_MODE_PCR_MASTER ||
-                avsync->mode == AV_SYNC_MODE_IPTV) {
+        } else if (LIVE_MODE(avsync->mode)) {
             /* vpts wrapping */
-            if (frame->pts)
-                msync_session_set_video_dis(avsync->fd, frame->pts);
-            else
-                msync_session_set_video_dis(avsync->fd, fpts);
-            return true;
+            log_info ("[%d]video disc %u --> %u",
+                    avsync->session_id, systime, fpts);
+            msync_session_set_video_dis(avsync->fd, frame->pts);
+            return false;
         }
     }
 
@@ -818,13 +830,19 @@ avs_start_ret av_sync_audio_start(
     if (msync_session_set_audio_start(avsync->fd, pts, delay, &start_mode))
         log_error("[%d]fail to set audio start", avsync->session_id);
 
-    avsync->state = AV_SYNC_STAT_RUNNING;
     if (start_mode == AVS_START_SYNC) {
         ret = AV_SYNC_ASTART_SYNC;
         avsync->session_started = true;
         avsync->state = AV_SYNC_STAT_SYNC_SETUP;
-    } else if (start_mode == AVS_START_ASYNC)
+    } else if (start_mode == AVS_START_ASYNC) {
         ret = AV_SYNC_ASTART_ASYNC;
+        avsync->state = AV_SYNC_STAT_RUNNING;
+    } else if (start_mode == AVS_START_AGAIN) {
+        ret = AV_SYNC_ASTART_AGAIN;
+    }
+
+    if (ret == AV_SYNC_ASTART_AGAIN)
+        goto exit;
 
     if (avsync->mode == AV_SYNC_MODE_AMASTER) {
         create_poll_t = true;
@@ -836,10 +854,10 @@ avs_start_ret av_sync_audio_start(
             avsync->audio_start = cb;
             avsync->audio_start_priv = priv;
         }
-    } else if (avsync->mode == AV_SYNC_MODE_PCR_MASTER || start_mode == AV_SYNC_MODE_IPTV)
+    } else if (LIVE_MODE(avsync->mode))
         create_poll_t = true;
 
-    if (create_poll_t) {
+    if (create_poll_t && !avsync->poll_thread) {
         int ret;
 
         log_info("[%d]start poll thread", avsync->session_id);
@@ -850,7 +868,13 @@ avs_start_ret av_sync_audio_start(
             return AV_SYNC_ASTART_ERR;
         }
     }
-
+    if (LIVE_MODE(avsync->mode)) {
+        uint32_t systime;
+        msync_session_get_wall(avsync->fd, &systime, NULL);
+        log_info("[%d]return %u w %u pts %u d %u",
+                avsync->session_id, ret, systime, pts, delay);
+    }
+exit:
     log_info("[%d]return %u", avsync->session_id, ret);
     return ret;
 }
@@ -874,18 +898,59 @@ int av_sync_audio_render(
         goto done;
     }
 
+    /* stopping procedure, unblock audio rendering */
+    if (avsync->mode == AV_SYNC_MODE_PCR_MASTER &&
+            avsync->active_mode == AV_SYNC_MODE_FREE_RUN) {
+        action = AV_SYNC_AA_DROP;
+        goto done;
+    }
+
     msync_session_get_wall(avsync->fd, &systime, NULL);
-    if (abs_diff(systime, pts) < A_ADJ_THREDHOLD) {
+
+    if (avsync->state == AV_SYNC_STAT_SYNC_SETUP &&
+            LIVE_MODE(avsync->mode) &&
+            abs_diff(systime, pts) > STREAM_DISC_THRES) {
+        /* outlier by stream error */
+        avsync->outlier_cnt++;
+        if (avsync->outlier_cnt > OUTLIER_MAX_CNT) {
+            /* treat as disc, just drop current frame */
+            avsync->state = AV_SYNC_STAT_SYNC_LOST;
+            avsync->outlier_cnt = 0;
+            action = AV_SYNC_AA_DROP;
+            systime = pts;
+            msync_session_set_audio_dis(avsync->fd, pts);
+            goto done;
+        }
+        log_info("[%d]ignore outlier %u", avsync->session_id, pts);
+        pts = systime;
+        action = AV_SYNC_AA_RENDER;
+        goto done;
+    }
+
+    avsync->outlier_cnt = 0;
+    /* low bound from sync_lost to sync_setup */
+    if (abs_diff(systime, pts) < A_ADJ_THREDHOLD_LB) {
+        avsync->state = AV_SYNC_STAT_SYNC_SETUP;
+        action = AV_SYNC_AA_RENDER;
+        goto done;
+    }
+
+    /* high bound of sync_setup */
+    if (abs_diff(systime, pts) < A_ADJ_THREDHOLD_HB &&
+            avsync->state != AV_SYNC_STAT_SYNC_LOST) {
+        avsync->state = AV_SYNC_STAT_SYNC_SETUP;
         action = AV_SYNC_AA_RENDER;
         goto done;
     }
 
     if ((int)(systime - pts) > 0) {
+        avsync->state = AV_SYNC_STAT_SYNC_LOST;
         action = AV_SYNC_AA_DROP;
         goto done;
     }
 
     if ((int)(systime - pts) < 0) {
+        avsync->state = AV_SYNC_STAT_SYNC_LOST;
         action = AV_SYNC_AA_INSERT;
         goto done;
     }
@@ -896,8 +961,11 @@ done:
     if (action == AV_SYNC_AA_RENDER) {
         avsync->apts = pts;
         msync_session_update_apts(avsync->fd, systime, pts, 0);
+        log_debug("[%d]return %d sys %u - pts %u = %d",
+                avsync->session_id, action, systime, pts, systime - pts);
     } else {
-        log_info("[%d]return %d sys %u pts %u", avsync->session_id, action, systime, pts);
+        log_info("[%d]return %d sys %u - pts %u = %d",
+                avsync->session_id, action, systime, pts, systime - pts);
     }
 
     return ret;
@@ -943,6 +1011,19 @@ static void handle_mode_change_a(struct av_sync_session* avsync,
             }
             avsync->speed = speed;
         }
+    } else if (avsync->active_mode == AV_SYNC_MODE_PCR_MASTER) {
+        struct session_debug debug;
+        if (!msync_session_get_debug_mode(avsync->fd, &debug)) {
+            if (debug.debug_freerun) {
+                avsync->backup_mode = avsync->mode;
+                avsync->mode = AV_SYNC_MODE_FREE_RUN;
+                log_warn("[%d]audio to freerun mode", avsync->session_id);
+            } else {
+                avsync->mode = avsync->backup_mode;
+                log_warn("[%d]audio back to mode %d",
+                        avsync->session_id, avsync->mode);
+            }
+        }
     }
 }
 
@@ -951,6 +1032,19 @@ static void handle_mode_change_v(struct av_sync_session* avsync,
 {
     log_info("[%d]amode mode %d %d v/a %d/%d", avsync->session_id,
             avsync->active_mode, avsync->mode, v_active, a_active);
+    if (avsync->active_mode == AV_SYNC_MODE_PCR_MASTER) {
+        struct session_debug debug;
+        if (!msync_session_get_debug_mode(avsync->fd, &debug)) {
+            if (debug.debug_freerun) {
+                avsync->backup_mode = avsync->mode;
+                avsync->mode = AV_SYNC_MODE_FREE_RUN;
+                log_warn("[%d]video to freerun mode", avsync->session_id);
+            } else
+                avsync->mode = avsync->backup_mode;
+                log_warn("[%d]video back to mode %d",
+                        avsync->session_id, avsync->mode);
+        }
+    }
 }
 
 static void * poll_thread(void * arg)
@@ -981,7 +1075,9 @@ static void * poll_thread(void * arg)
         if (pfd.revents & POLLERR)
             log_error("[%d]POLLERR received", avsync->session_id);
 
-        /* mode change */
+        /* mode change. Non-exclusive wait so all the processes
+         * shall be woken up
+         */
         if (pfd.revents & POLLPRI) {
             bool v_active, a_active, v_timeout;
 
@@ -999,7 +1095,7 @@ exit:
     return NULL;
 }
 
-int av_sync_set_pcr_clock(void *sync, pts90K pts)
+int av_sync_set_pcr_clock(void *sync, pts90K pts, uint64_t mono_clock)
 {
     struct av_sync_session *avsync = (struct av_sync_session *)sync;
 
@@ -1009,10 +1105,10 @@ int av_sync_set_pcr_clock(void *sync, pts90K pts)
     if (avsync->type != AV_SYNC_TYPE_PCR)
         return -2;
 
-    return msync_session_set_pcr(avsync->fd, pts);
+    return msync_session_set_pcr(avsync->fd, pts, mono_clock);
 }
 
-int av_sync_get_pcr_clock(void *sync, pts90K *pts)
+int av_sync_get_pcr_clock(void *sync, pts90K *pts, uint64_t * mono_clock)
 {
     struct av_sync_session *avsync = (struct av_sync_session *)sync;
 
@@ -1022,7 +1118,7 @@ int av_sync_get_pcr_clock(void *sync, pts90K *pts)
     if (avsync->type != AV_SYNC_TYPE_PCR)
         return -2;
 
-    return msync_session_get_pcr(avsync->fd, pts);
+    return msync_session_get_pcr(avsync->fd, pts, mono_clock);
 }
 
 int av_sync_set_session_name(void *sync, const char *name)

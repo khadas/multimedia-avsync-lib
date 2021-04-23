@@ -16,6 +16,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include "aml_avsync.h"
+#include "msync.h"
 
 int msync_create_session();
 void msync_destory_session(int id);
@@ -41,7 +42,8 @@ int msync_session_set_video_stop(int fd);
 int msync_session_get_stat (int fd, enum sync_mode *mode,
         bool *v_active, bool *a_active, bool *v_timeout);
 bool msync_clock_started(int fd);
-int msync_session_set_pcr(int fd, pts90K pts);
-int msync_session_get_pcr(int fd, pts90K *pts);
+int msync_session_set_pcr(int fd, pts90K pts, uint64_t mono_clock);
+int msync_session_get_pcr(int fd, pts90K *pts, uint64_t *mono_clock);
+int msync_session_get_debug_mode(int fd, struct session_debug *debug);
 
 #endif
