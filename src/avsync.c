@@ -452,7 +452,9 @@ struct vframe *av_sync_pop_frame(void *sync)
     }
 
     if (avsync->start_policy == AV_SYNC_START_ALIGN &&
-        !avsync->first_frame_toggled && !msync_clock_started(avsync->fd)) {
+            !avsync->first_frame_toggled &&
+            !msync_clock_started(avsync->fd)) {
+        pthread_mutex_unlock(&avsync->lock);
         log_trace("[%d]clock not started", avsync->session_id);
         return NULL;
     }
