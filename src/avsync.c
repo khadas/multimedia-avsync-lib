@@ -35,6 +35,13 @@ enum sync_state {
     AV_SYNC_STAT_SYNC_LOST = 3,
 };
 
+enum audio_switch_state_ {
+    AUDIO_SWITCH_STAT_INIT = 0,
+    AUDIO_SWITCH_STAT_RESET = 1,
+    AUDIO_SWITCH_STAT_START = 2,
+    AUDIO_SWITCH_STAT_FINISH = 3,
+};
+
 #define SESSION_DEV "avsync_s"
 
 struct  av_sync_session {
@@ -103,6 +110,9 @@ struct  av_sync_session {
     /* error detection */
     uint32_t last_poptime;
     uint32_t outlier_cnt;
+    // indicate set audio switch
+    bool in_audio_switch;
+    enum audio_switch_state_ audio_switch_state;
 };
 
 #define MAX_FRAME_NUM 32
@@ -226,6 +236,16 @@ static void* create_internal(int session_id,
             log_error("get policy");
             goto err2;
         }
+        if (msync_session_get_stat(avsync->fd, &avsync->active_mode,
+                NULL, NULL, NULL, &avsync->in_audio_switch)) {
+            log_error("get state");
+            goto err2;
+        }
+        if (avsync->in_audio_switch) {
+            log_info("audio_switch_state reseted the audio");
+            avsync->audio_switch_state = AUDIO_SWITCH_STAT_RESET;
+        }
+
         log_info("[%d]retrieve sync mode %d policy %d",
             session_id, avsync->mode, avsync->start_policy);
     }
@@ -343,6 +363,7 @@ int avs_sync_set_start_policy(void *sync, enum sync_start_policy policy)
 int av_sync_pause(void *sync, bool pause)
 {
     struct av_sync_session *avsync = (struct av_sync_session *)sync;
+    bool v_active, a_active, v_timeout;
     int rc;
 
     if (!avsync)
@@ -351,9 +372,21 @@ int av_sync_pause(void *sync, bool pause)
     if (avsync->mode == AV_SYNC_MODE_PCR_MASTER)
         return -1;
 
+     rc = msync_session_get_stat(avsync->fd, &avsync->active_mode,
+                &v_active, &a_active, &v_timeout,
+                &avsync->in_audio_switch);
+
     /* ignore */
-    if (avsync->mode == AV_SYNC_MODE_AMASTER && avsync->type == AV_SYNC_TYPE_VIDEO)
+    if (avsync->mode == AV_SYNC_MODE_AMASTER
+        && avsync->type == AV_SYNC_TYPE_VIDEO
+        && a_active && !avsync->in_audio_switch)
         return 0;
+
+    if (avsync->in_audio_switch && avsync->type == AV_SYNC_TYPE_AUDIO) {
+        log_info("[%d] ignore the pause from audio", avsync->session_id);
+        avsync->audio_switch_state = AUDIO_SWITCH_STAT_RESET;
+        return 0;
+    }
 
     rc = msync_session_set_pause(avsync->fd, pause);
     avsync->paused = pause;
@@ -841,6 +874,13 @@ avs_start_ret av_sync_audio_start(
     if (msync_session_set_audio_start(avsync->fd, pts, delay, &start_mode))
         log_error("[%d]fail to set audio start", avsync->session_id);
 
+    if (avsync->in_audio_switch
+         && avsync->audio_switch_state == AUDIO_SWITCH_STAT_RESET) {
+        log_info("%d audio_switch_state to start start mode %d",
+                avsync->session_id, start_mode);
+        avsync->audio_switch_state = AUDIO_SWITCH_STAT_START;
+    }
+
     if (start_mode == AVS_START_SYNC) {
         ret = AV_SYNC_ASTART_SYNC;
         avsync->session_started = true;
@@ -855,7 +895,7 @@ avs_start_ret av_sync_audio_start(
     if (ret == AV_SYNC_ASTART_AGAIN)
         goto exit;
 
-    if (avsync->mode == AV_SYNC_MODE_AMASTER) {
+    if (avsync->mode == AV_SYNC_MODE_AMASTER || avsync->in_audio_switch) {
         create_poll_t = true;
         if (start_mode == AVS_START_ASYNC) {
             if (!cb) {
@@ -903,6 +943,29 @@ int av_sync_audio_render(
     if (!avsync || !policy)
         return -1;
 
+    msync_session_get_wall(avsync->fd, &systime, NULL);
+
+    log_trace("audio render pts %u, systime %u, mode %u diff ms %d",
+         pts, systime, avsync->mode, (int)(pts-systime)/90);
+
+    if (avsync->in_audio_switch
+         && avsync->audio_switch_state == AUDIO_SWITCH_STAT_START) {
+        if (abs_diff(systime, pts) < A_ADJ_THREDHOLD_HB) {
+           log_info("Audio pts in system range sys %u pts %u\n", systime, pts);
+           avsync->audio_switch_state = AUDIO_SWITCH_STAT_FINISH;
+           action = AV_SYNC_AA_RENDER;
+        } else if ((int)(systime - pts) > 0) {
+            log_info("[%d] audio  change drop %d ms sys %u pts %u", avsync->session_id,
+                     (int)(systime - pts)/90, systime, pts);
+            action = AV_SYNC_AA_DROP;
+        } else {
+            action = AV_SYNC_AA_INSERT;
+            log_info("[%d] audio change insert %d ms sys %u pts %u", avsync->session_id,
+                     (int)(pts - systime)/90, systime, pts);
+        }
+        goto done;
+    }
+
     if (avsync->mode == AV_SYNC_MODE_FREE_RUN ||
             avsync->mode == AV_SYNC_MODE_AMASTER) {
         action = AV_SYNC_AA_RENDER;
@@ -916,7 +979,6 @@ int av_sync_audio_render(
         goto done;
     }
 
-    msync_session_get_wall(avsync->fd, &systime, NULL);
 
     if (avsync->state == AV_SYNC_STAT_SYNC_SETUP &&
             LIVE_MODE(avsync->mode) &&
@@ -971,9 +1033,21 @@ done:
     policy->delta = (int)(systime - pts);
     if (action == AV_SYNC_AA_RENDER) {
         avsync->apts = pts;
-        msync_session_update_apts(avsync->fd, systime, pts, 0);
-        log_debug("[%d]return %d sys %u - pts %u = %d",
+        if (!avsync->in_audio_switch) {
+            msync_session_update_apts(avsync->fd, systime, pts, 0);
+            log_debug("[%d]return %d sys %u - pts %u = %d",
                 avsync->session_id, action, systime, pts, systime - pts);
+        } else if(avsync->audio_switch_state == AUDIO_SWITCH_STAT_FINISH) {
+            msync_session_update_apts(avsync->fd, systime, pts, 0);
+            log_info("[%d] audio switch done sys %u pts %u",
+                avsync->session_id, systime, pts);
+            msync_session_set_audio_switch(avsync->fd, false);
+            avsync->in_audio_switch = false;
+            avsync->audio_switch_state = AUDIO_SWITCH_STAT_INIT;
+        } else {
+            log_trace("[%d] in audio switch ret %d sys %u - pts %u = %d",
+                avsync->session_id, action, systime, pts, systime - pts);
+        }
     } else {
         log_info("[%d]return %d sys %u - pts %u = %d",
                 avsync->session_id, action, systime, pts, systime - pts);
@@ -1000,10 +1074,10 @@ static void handle_mode_change_a(struct av_sync_session* avsync,
         float speed;
         if (avsync->start_policy == AV_SYNC_START_ALIGN &&
                 a_active && avsync->audio_start) {
-            if (v_active || v_timeout) {
+            if (v_active || v_timeout || avsync->in_audio_switch) {
                 log_info("audio start cb");
                 trigger_audio_start_cb(avsync, AV_SYNC_ASCB_OK);
-	    }
+            }
         }
 
         if (!msync_session_get_rate(avsync->fd, &speed)) {
@@ -1093,7 +1167,7 @@ static void * poll_thread(void * arg)
             bool v_active, a_active, v_timeout;
 
             msync_session_get_stat(fd, &avsync->active_mode,
-                &v_active, &a_active, &v_timeout);
+                &v_active, &a_active, &v_timeout, &avsync->in_audio_switch);
 
             if (avsync->type == AV_SYNC_TYPE_AUDIO)
                 handle_mode_change_a(avsync, v_active, a_active, v_timeout);
@@ -1140,4 +1214,49 @@ int av_sync_set_session_name(void *sync, const char *name)
         return -1;
 
     return msync_session_set_name(avsync->fd, name);
+}
+
+int av_sync_set_audio_switch(void *sync,  bool start)
+{
+    struct av_sync_session *avsync = (struct av_sync_session *)sync;
+    bool v_active, a_active, v_timeout;
+
+    if (!avsync)
+        return -1;
+    if (msync_session_get_stat(avsync->fd, &avsync->active_mode,
+                &v_active, &a_active,
+                &v_timeout, &avsync->audio_switch_state)) {
+        log_error("[%d] can not get session state",
+                avsync->session_id);
+        return -1;
+    }
+    if (!v_active || !a_active) {
+        log_error("[%d]  no apply if not AV both active v %d a %d",
+            avsync->session_id, v_active, a_active);
+        return -1;
+    }
+    if (msync_session_set_audio_switch(avsync->fd, start)) {
+        log_error("[%d]fail to set audio switch %d", avsync->session_id, start);
+        return -1;
+    }
+    avsync->in_audio_switch = start;
+    avsync->audio_switch_state = AUDIO_SWITCH_STAT_INIT;
+    log_info("[%d]update audio switch to %d", avsync->session_id, start);
+    return  0;
+}
+
+int av_sync_get_audio_switch(void *sync,  bool *start)
+{
+    struct av_sync_session *avsync = (struct av_sync_session *)sync;
+
+    if (!avsync)
+        return -1;
+    if (msync_session_get_stat(avsync->fd, &avsync->active_mode,
+                NULL, NULL, NULL, &avsync->in_audio_switch)) {
+        log_error("[%d] can not audio seamless switch state",
+                avsync->session_id);
+        return -1;
+    }
+    if (start) *start =  avsync->in_audio_switch;
+    return 0;
 }

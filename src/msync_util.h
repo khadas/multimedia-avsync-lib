@@ -40,10 +40,10 @@ int msync_session_update_apts(int fd, uint32_t system, uint32_t pts, uint32_t de
 int msync_session_set_audio_stop(int fd);
 int msync_session_set_video_stop(int fd);
 int msync_session_get_stat (int fd, enum sync_mode *mode,
-        bool *v_active, bool *a_active, bool *v_timeout);
+        bool *v_active, bool *a_active, bool *v_timeout, bool *a_switch);
 bool msync_clock_started(int fd);
 int msync_session_set_pcr(int fd, pts90K pts, uint64_t mono_clock);
 int msync_session_get_pcr(int fd, pts90K *pts, uint64_t *mono_clock);
 int msync_session_get_debug_mode(int fd, struct session_debug *debug);
-
+int msync_session_set_audio_switch(int fd, bool start);
 #endif

@@ -282,7 +282,8 @@ int msync_session_set_video_stop(int fd)
 }
 
 int msync_session_get_stat (int fd, enum sync_mode *mode,
-        bool *v_active, bool *a_active, bool *v_timeout)
+        bool *v_active, bool *a_active, bool *v_timeout,
+        bool *a_switch)
 {
     int rc;
     struct session_sync_stat stat;
@@ -316,7 +317,8 @@ int msync_session_get_stat (int fd, enum sync_mode *mode,
         *a_active = stat.a_active;
     if (v_timeout)
         *v_timeout = stat.v_timeout;
-
+    if (a_switch)
+        *a_switch = stat.audio_switch;
     return rc;
 }
 
@@ -371,4 +373,10 @@ int msync_session_get_debug_mode(int fd, struct session_debug *debug)
         log_error("session[%d] set debug mode errno:%d", fd, errno);
 
     return rc;
+}
+
+int msync_session_set_audio_switch(int fd, bool start)
+{
+    log_info("audio switch set to %d", start);
+    return msync_session_set_event(fd, AVS_AUDIO_SWITCH, start);
 }

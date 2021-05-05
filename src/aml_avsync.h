@@ -342,4 +342,29 @@ int av_sync_get_clock(void *sync, pts90K *pts);
  *   0 for OK, or error code
  */
 int av_sync_set_session_name(void *sync, const char *name);
+
+/* Start/finish audio seamless switch
+ * It declaims the coming audio seamless switch will happen.
+ * After removing the audio, the video will still play normally.
+ * After adding back the audio, it will sync with pipe-line without break the playing,
+ * only short audio break/mute on the switch is expected.
+ * Params:
+ *   @sync: AV sync module handle
+ *   @start: start the switch for true, or finish/reset for false
+ * Return:
+ *   0 for OK, or error code
+ */
+int av_sync_set_audio_switch(void *sync,  bool start);
+
+/*  Get the current audio seamless switch status.
+ *  After setting the seamless switch, upper level can get the result by polling.
+ *  The status will become false when the switching has finished or being termintated
+ * Params:
+ *   @sync: AV sync module handle
+ *   @status: start the switch for true, or finish/reset for false
+ * Return:
+ *   0 for OK, or error code
+ */
+int av_sync_get_audio_switch(void *sync,  bool *status);
+
 #endif
