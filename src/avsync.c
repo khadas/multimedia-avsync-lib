@@ -111,6 +111,7 @@ struct  av_sync_session {
 #define AV_DISC_THRES_MIN (TIME_UNIT90K * 3)
 #define A_ADJ_THREDHOLD_HB (TIME_UNIT90K/10)
 #define A_ADJ_THREDHOLD_LB (TIME_UNIT90K/40)
+#define AV_PATTERN_RESET_THRES (TIME_UNIT90K / 10)
 #define SYNC_LOST_PRINT_THRESHOLD 10000000 //10 seconds In micro seconds
 #define LIVE_MODE(mode) ((mode) == AV_SYNC_MODE_PCR_MASTER || (mode) == AV_SYNC_MODE_IPTV)
 
@@ -647,6 +648,14 @@ static bool frame_expire(struct av_sync_session* avsync,
             msync_session_set_video_dis(avsync->fd, frame->pts);
             return false;
         }
+    }
+
+    /* In some cases, keeping pattern will enlarge the gap */
+    if (abs_diff(systime, fpts) > AV_PATTERN_RESET_THRES &&
+            avsync->first_frame_toggled) {
+        reset_pattern(avsync->pattern_detector);
+        log_warn("sync pattern reset sys:%x fpts:%x",
+                    systime, fpts);
     }
 
     expire = (int)(systime - fpts) >= 0;
