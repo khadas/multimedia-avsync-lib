@@ -62,6 +62,7 @@ typedef int (*audio_start_cb)(void *priv, avs_ascb_reason reason);
 typedef enum {
     AV_SYNC_ASTART_SYNC = 0,
     AV_SYNC_ASTART_ASYNC,
+    AV_SYNC_ASTART_AGAIN,
     AV_SYNC_ASTART_ERR
 } avs_start_ret;
 
@@ -80,6 +81,7 @@ struct audio_policy {
     /* delta between apts and ideal render position
      * positive means apts is behind wall clock
      * negative means apts is ahead of wall clock
+     * 0 is only valid for AV_SYNC_AA_DROP, drop current chunk
      */
     int delta;
 };
@@ -216,7 +218,7 @@ int av_sync_push_frame(void *sync , struct vframe *frame);
 struct vframe *av_sync_pop_frame(void *sync);
 
 /* Audio start control. Audio render need to check return value and
- * do sync or async start.
+ * do sync or async start. NOT thread safe.
  * Params:
  *   @sync: AV sync module handle
  *   @pts: first audio pts
@@ -226,6 +228,7 @@ struct vframe *av_sync_pop_frame(void *sync);
  * Return:
  *   AV_SYNC_ASTART_SYNC, audio can start render ASAP. No need to wait for callback.
  *   AV_SYNC_ASTART_ASYNC, audio need to block until callback is triggered.
+ *   AV_SYNC_ASTART_AGAIN, discard current audio chunk and call this API again.
  *   AV_SYNC_ASTART_ERR, something bad happens
  */
 avs_start_ret av_sync_audio_start(
@@ -236,6 +239,7 @@ avs_start_ret av_sync_audio_start(
     void *priv);
 
 /* Audio render policy. Indicate render action and the difference from ideal position
+ * NOT thread safe.
  * Params:
  *   @sync: AV sync module handle
  *   @pts: curent audio pts (considering delay)
@@ -303,12 +307,22 @@ int av_sync_set_pause_pts_cb(void *sync, pause_pts_done cb, void *priv);
  * Params:
  *   @sync: AV sync module handle
  *   @pts: PCR clock
+ *   @mono_clock: system monotonic clock receiving the pts
  * Return:
  *   0 for OK, or error code
  */
-int av_sync_set_pcr_clock(void *sync, pts90K pts);
+int av_sync_set_pcr_clock(void *sync, pts90K pts, uint64_t mono_clock);
 
-int av_sync_get_pcr_clock(void *sync, pts90K *pts);
+/* Get PCR clock pair.
+ * Use for clock recovery
+ * Params:
+ *   @sync: AV sync module handle
+ *   @pts: PCR clock pointer
+ *   @mono_clock: system monotonic clock pointer receiving the pts
+ * Return:
+ *   0 for OK, or error code
+ */
+int av_sync_get_pcr_clock(void *sync, pts90K *pts, uint64_t *mono_clock);
 
 /* get wall clock
  * Params:
