@@ -119,8 +119,8 @@ struct  av_sync_session {
 #define DEFAULT_START_THRESHOLD 2
 #define TIME_UNIT90K    (90000)
 #define AV_DISC_THRES_MIN (TIME_UNIT90K * 3)
-#define A_ADJ_THREDHOLD_HB (TIME_UNIT90K/10)
-#define A_ADJ_THREDHOLD_LB (TIME_UNIT90K/40)
+#define A_ADJ_THREDHOLD_HB (900 * 6) //60ms
+#define A_ADJ_THREDHOLD_LB (900 * 2) //20ms
 #define AV_PATTERN_RESET_THRES (TIME_UNIT90K / 10)
 #define SYNC_LOST_PRINT_THRESHOLD 10000000 //10 seconds In micro seconds
 #define LIVE_MODE(mode) ((mode) == AV_SYNC_MODE_PCR_MASTER || (mode) == AV_SYNC_MODE_IPTV)
@@ -980,6 +980,12 @@ int av_sync_audio_render(
     }
 
 
+    if (avsync->mode == AV_SYNC_MODE_FREE_RUN ||
+            avsync->mode == AV_SYNC_MODE_AMASTER) {
+        action = AV_SYNC_AA_RENDER;
+        goto done;
+    }
+
     if (avsync->state == AV_SYNC_STAT_SYNC_SETUP &&
             LIVE_MODE(avsync->mode) &&
             abs_diff(systime, pts) > STREAM_DISC_THRES) {
@@ -1049,7 +1055,7 @@ done:
                 avsync->session_id, action, systime, pts, systime - pts);
         }
     } else {
-        log_info("[%d]return %d sys %u - pts %u = %d",
+        log_debug("[%d]return %d sys %u - pts %u = %d",
                 avsync->session_id, action, systime, pts, systime - pts);
     }
 
