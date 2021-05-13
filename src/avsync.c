@@ -1231,7 +1231,7 @@ int av_sync_set_audio_switch(void *sync,  bool start)
         return -1;
     if (msync_session_get_stat(avsync->fd, &avsync->active_mode,
                 &v_active, &a_active,
-                &v_timeout, &avsync->audio_switch_state)) {
+                &v_timeout, &avsync->in_audio_switch)) {
         log_error("[%d] can not get session state",
                 avsync->session_id);
         return -1;
