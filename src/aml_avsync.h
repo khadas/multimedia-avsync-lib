@@ -274,6 +274,15 @@ int av_sync_set_speed(void *sync, float speed);
  */
 int av_sync_change_mode(void *sync, enum sync_mode mode);
 
+/* get avsync mode
+ * Params:
+ *   @sync: AV sync module handle
+ *   @mode: pointer to return current mode
+ * Return:
+ *   0 for OK, or error code
+ */
+int av_sync_get_mode(void *sync, enum sync_mode *mode);
+
 /* set pause PTS
  * av sync will pause after reaching the assigned PTS or do step.
  * Need to call @av_sync_pause(false) to resume a the playback.

@@ -817,6 +817,17 @@ int av_sync_change_mode(void *sync, enum sync_mode mode)
     return 0;
 }
 
+int av_sync_get_mode(void *sync, enum sync_mode *mode)
+{
+    struct av_sync_session *avsync = (struct av_sync_session *)sync;
+
+    if (!avsync || !mode)
+        return -1;
+
+    *mode = avsync->mode;
+    return 0;
+}
+
 int av_sync_set_pause_pts(void *sync, pts90K pts)
 {
     struct av_sync_session *avsync = (struct av_sync_session *)sync;
