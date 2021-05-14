@@ -110,6 +110,8 @@ struct  av_sync_session {
     /* error detection */
     uint32_t last_poptime;
     uint32_t outlier_cnt;
+    pts90K last_disc_pts;
+
     // indicate set audio switch
     bool in_audio_switch;
     enum audio_switch_state_ audio_switch_state;
@@ -209,7 +211,8 @@ static void* create_internal(int session_id,
     avsync->session_started = false;
     avsync->speed = 1.0f;
     avsync->pause_pts = AV_SYNC_INVALID_PAUSE_PTS;
-    avsync->vsync_interval = AV_SYNC_INVALID_PAUSE_PTS;
+    avsync->vsync_interval = -1;
+    avsync->last_disc_pts = -1;
 
     pthread_mutex_init(&avsync->lock, NULL);
     log_info("[%d] mode %d type %d start_thres %d",
@@ -667,19 +670,22 @@ static bool frame_expire(struct av_sync_session* avsync,
         avsync->phase_set = false;
         reset_pattern(avsync->pattern_detector);
         if ((int)(systime - fpts) > 0) {
-            if (LIVE_MODE(avsync->mode)) {
+            if (LIVE_MODE(avsync->mode) && avsync->last_disc_pts != fpts) {
                 log_info ("[%d]video disc %u --> %u",
                     avsync->session_id, systime, fpts);
-                msync_session_set_video_dis(avsync->fd, frame->pts);
+                msync_session_set_video_dis(avsync->fd, fpts);
+                avsync->last_disc_pts = fpts;
             }
             /* catch up PCR */
             return true;
-        } else if (LIVE_MODE(avsync->mode)) {
+        } else if (LIVE_MODE(avsync->mode) && avsync->last_disc_pts != fpts) {
             /* vpts wrapping */
             log_info ("[%d]video disc %u --> %u",
                     avsync->session_id, systime, fpts);
-            msync_session_set_video_dis(avsync->fd, frame->pts);
-            return false;
+            msync_session_set_video_dis(avsync->fd, fpts);
+            avsync->last_disc_pts = fpts;
+            /* clean up frames */
+            return true;
         }
     }
 
@@ -1008,7 +1014,6 @@ int av_sync_audio_render(
             avsync->outlier_cnt = 0;
             action = AV_SYNC_AA_DROP;
             systime = pts;
-            msync_session_set_audio_dis(avsync->fd, pts);
             goto done;
         }
         log_info("[%d]ignore outlier %u", avsync->session_id, pts);
@@ -1052,8 +1057,8 @@ done:
         avsync->apts = pts;
         if (!avsync->in_audio_switch) {
             msync_session_update_apts(avsync->fd, systime, pts, 0);
-            log_debug("[%d]return %d sys %u - pts %u = %d",
-                avsync->session_id, action, systime, pts, systime - pts);
+            log_info("[%d]return %d sys %u - pts %u = %d",
+                    avsync->session_id, action, systime, pts, systime - pts);
         } else if(avsync->audio_switch_state == AUDIO_SWITCH_STAT_FINISH) {
             msync_session_update_apts(avsync->fd, systime, pts, 0);
             log_info("[%d] audio switch done sys %u pts %u",
@@ -1066,7 +1071,14 @@ done:
                 avsync->session_id, action, systime, pts, systime - pts);
         }
     } else {
-        log_debug("[%d]return %d sys %u - pts %u = %d",
+        if (abs_diff(systime, pts) > AV_DISC_THRES_MIN &&
+                    avsync->last_disc_pts != pts) {
+            log_info ("[%d]audio disc %u --> %u",
+                    avsync->session_id, systime, pts);
+            msync_session_set_audio_dis(avsync->fd, pts);
+            avsync->last_disc_pts = pts;
+        }
+        log_info("[%d]return %d sys %u - pts %u = %d",
                 avsync->session_id, action, systime, pts, systime - pts);
     }
 
