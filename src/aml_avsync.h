@@ -46,6 +46,7 @@ enum clock_recovery_stat {
     CLK_RECOVERY_NOT_RUNNING = 0,
     CLK_RECOVERY_ONGOING = 1,
     CLK_RECOVERY_READY = 2,
+    CLK_RECOVERY_ERR,
     CLK_RECOVERY_MAX
 };
 
@@ -393,6 +394,7 @@ int av_sync_get_audio_switch(void *sync,  bool *status);
  *   CLK_RECOVERY_ONGOING: still ongoing, need more time to converge.
  *   CLK_RECOVERY_READY: clock recovery result is ready to be used. The result might
  *                       be updated later for better accuracy.
+ *   CLK_RECOVERY_ERR: error happens
  */
 enum  clock_recovery_stat av_sync_get_clock_devication(void *sync, int32_t *ppm);
 #endif

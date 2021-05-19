@@ -27,7 +27,7 @@
 #include "msync_util.h"
 #include "msync.h"
 #include <pthread.h>
-
+#include "pcr_monitor.h"
 enum sync_state {
     AV_SYNC_STAT_INIT = 0,
     AV_SYNC_STAT_RUNNING = 1,
@@ -117,6 +117,10 @@ struct  av_sync_session {
     // indicate set audio switch
     bool in_audio_switch;
     enum audio_switch_state_ audio_switch_state;
+
+    //pcr monitor handle
+    void *pcr_monitor;
+    int ppm;
 };
 
 #define MAX_FRAME_NUM 32
@@ -235,6 +239,13 @@ static void* create_internal(int session_id,
         goto err2;
     }
 
+    if (avsync->type == AV_SYNC_TYPE_PCR) {
+        if (pcr_monitor_init(&avsync->pcr_monitor)) {
+            log_error("pcr monitor init");
+            goto err2;
+        }
+    }
+
     if (!attach) {
         msync_session_set_mode(avsync->fd, mode);
         avsync->mode = mode;
@@ -242,17 +253,17 @@ static void* create_internal(int session_id,
         avsync->attached = true;
         if (msync_session_get_mode(avsync->fd, &avsync->mode)) {
             log_error("get mode");
-            goto err2;
+            goto err3;
         }
         avsync->backup_mode = avsync->mode;
         if (msync_session_get_start_policy(avsync->fd, &avsync->start_policy)) {
             log_error("get policy");
-            goto err2;
+            goto err3;
         }
         if (msync_session_get_stat(avsync->fd, &avsync->active_mode,
                 NULL, NULL, NULL, &avsync->in_audio_switch)) {
             log_error("get state");
-            goto err2;
+            goto err3;
         }
         if (avsync->in_audio_switch) {
             log_info("audio_switch_state reseted the audio");
@@ -264,6 +275,9 @@ static void* create_internal(int session_id,
     }
 
     return avsync;
+err3:
+    if (avsync->pcr_monitor)
+        pcr_monitor_destroy(avsync->pcr_monitor);
 err2:
     destroy_pattern_detector(avsync->pattern_detector);
 err:
@@ -346,6 +360,10 @@ void av_sync_destroy(void *sync)
         else
             msync_session_set_audio_stop(avsync->fd);
     }
+
+    if(avsync->pcr_monitor)
+        pcr_monitor_destroy(avsync->pcr_monitor);
+
     close(avsync->fd);
     pthread_mutex_destroy(&avsync->lock);
     if (avsync->type == AV_SYNC_TYPE_VIDEO) {
@@ -1232,12 +1250,30 @@ exit:
 int av_sync_set_pcr_clock(void *sync, pts90K pts, uint64_t mono_clock)
 {
     struct av_sync_session *avsync = (struct av_sync_session *)sync;
-
+    struct pcr_info pcr;
+    enum pcr_monitor_status status;
+    int ppm;
     if (!avsync)
         return -1;
 
     if (avsync->type != AV_SYNC_TYPE_PCR)
         return -2;
+
+    pcr.monoclk = mono_clock / 1000;
+    pcr.pts = (long long) pts * 1000 / 90;
+    pcr_monitor_process(avsync->pcr_monitor, &pcr);
+
+    status = pcr_monitor_get_status(avsync->pcr_monitor);
+
+    if (status >= DEVIATION_READY) {
+        pcr_monitor_get_deviation(avsync->pcr_monitor, &ppm);
+        if (avsync->ppm != ppm) {
+            avsync->ppm = ppm;
+            log_info("[%d]ppm:%d", avsync->session_id, ppm);
+            if (msync_session_set_clock_dev(avsync->fd, ppm))
+                log_error("set clock dev fail");
+        }
+    }
 
     return msync_session_set_pcr(avsync->fd, pts, mono_clock);
 }
@@ -1311,9 +1347,16 @@ enum  clock_recovery_stat av_sync_get_clock_devication(void *sync, int32_t *ppm)
 {
     struct av_sync_session *avsync = (struct av_sync_session *)sync;
 
-    if (!avsync || avsync->mode != AV_SYNC_MODE_PCR_MASTER)
+    if (!avsync || !ppm)
+        return CLK_RECOVERY_ERR;
+    if (avsync->mode != AV_SYNC_MODE_PCR_MASTER)
         return CLK_RECOVERY_NOT_RUNNING;
 
-    //TODO
-    return CLK_RECOVERY_ONGOING;
+    if (msync_session_get_clock_dev(avsync->fd, ppm))
+        return CLK_RECOVERY_ERR;
+
+    if (*ppm == 0)
+        return CLK_RECOVERY_ONGOING;
+    else
+        return CLK_RECOVERY_READY;
 }

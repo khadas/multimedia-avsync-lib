@@ -1,4 +1,4 @@
-OBJ = avsync.c queue.c pattern.c log.c msync_util.c
+OBJ = avsync.c queue.c pattern.c log.c msync_util.c pcr_monitor.c
 
 TARGET = libamlavsync.so
 TEST = avsync_test
