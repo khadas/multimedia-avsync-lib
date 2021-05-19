@@ -1229,9 +1229,6 @@ int av_sync_get_pcr_clock(void *sync, pts90K *pts, uint64_t * mono_clock)
     if (!avsync)
         return -1;
 
-    if (avsync->type != AV_SYNC_TYPE_PCR)
-        return -2;
-
     return msync_session_get_pcr(avsync->fd, pts, mono_clock);
 }
 
@@ -1288,4 +1285,15 @@ int av_sync_get_audio_switch(void *sync,  bool *start)
     }
     if (start) *start =  avsync->in_audio_switch;
     return 0;
+}
+
+enum  clock_recovery_stat av_sync_get_clock_devication(void *sync, int32_t *ppm)
+{
+    struct av_sync_session *avsync = (struct av_sync_session *)sync;
+
+    if (!avsync || avsync->mode != AV_SYNC_MODE_PCR_MASTER)
+        return CLK_RECOVERY_NOT_RUNNING;
+
+    //TODO
+    return CLK_RECOVERY_ONGOING;
 }

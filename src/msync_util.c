@@ -380,3 +380,26 @@ int msync_session_set_audio_switch(int fd, bool start)
     log_info("audio switch set to %d", start);
     return msync_session_set_event(fd, AVS_AUDIO_SWITCH, start);
 }
+
+int msync_session_set_clock_dev(int fd, int32_t ppm)
+{
+    int rc;
+
+    rc = ioctl(fd, AMSYNCS_IOC_SET_CLK_DEV, &ppm);
+    if (rc)
+        log_error("session[%d] set clk dev errno:%d", fd, errno);
+    return rc;
+}
+
+int msync_session_get_clock_dev(int fd, int32_t *ppm)
+{
+    int rc;
+    int dev;
+
+    rc = ioctl(fd, AMSYNCS_IOC_GET_CLK_DEV, &dev);
+    if (rc)
+        log_error("session[%d] get clk dev errno:%d", fd, errno);
+    else
+        *ppm = dev;
+    return rc;
+}

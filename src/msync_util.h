@@ -46,4 +46,6 @@ int msync_session_set_pcr(int fd, pts90K pts, uint64_t mono_clock);
 int msync_session_get_pcr(int fd, pts90K *pts, uint64_t *mono_clock);
 int msync_session_get_debug_mode(int fd, struct session_debug *debug);
 int msync_session_set_audio_switch(int fd, bool start);
+int msync_session_get_clock_dev(int fd, int32_t *ppm);
+int msync_session_set_clock_dev(int fd, int32_t ppm);
 #endif
