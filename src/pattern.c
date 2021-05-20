@@ -144,9 +144,11 @@ void correct_pattern(void* handle, struct vframe *frame, struct vframe *nextfram
             /* check if next frame will toggle after 3 vsyncs */
             /* 22222...22222 -> 222..2213(2)22...22 */
             /* check if next frame will toggle after 3 vsyncs */
-
+            /* shall only allow one extra interval space to play around */
             if (((int)(systime + (expected_prev_interval + 1) *
-                        vsync_interval - npts) >= 0)) {
+                        vsync_interval - npts) >= 0) &&
+                ((int)(systime + (expected_prev_interval + 2) *
+                        vsync_interval - npts) < 0)) {
                 *expire = false;
                 log_debug("hold frame for pattern: %d", pd->detected);
             }
