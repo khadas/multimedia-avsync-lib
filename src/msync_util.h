@@ -48,4 +48,5 @@ int msync_session_get_debug_mode(int fd, struct session_debug *debug);
 int msync_session_set_audio_switch(int fd, bool start);
 int msync_session_get_clock_dev(int fd, int32_t *ppm);
 int msync_session_set_clock_dev(int fd, int32_t ppm);
+int msync_session_get_disc_thres(int session_id, uint32_t *min, uint32_t *max);
 #endif

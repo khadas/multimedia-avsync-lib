@@ -16,7 +16,7 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 #include <linux/types.h>
-//#include <linux/amlogic/msync.h>
+#include <string.h>
 #include "msync.h"
 #include "aml_avsync_log.h"
 #include "msync_util.h"
@@ -402,4 +402,47 @@ int msync_session_get_clock_dev(int fd, int32_t *ppm)
     else
         *ppm = dev;
     return rc;
+}
+
+static int get_sysfs_uint32(const char *path, uint32_t *value)
+{
+    int fd;
+    char valstr[64];
+    uint32_t val = 0;
+
+    fd = open(path, O_RDONLY);
+    if (fd >= 0) {
+        memset(valstr, 0, 64);
+        read(fd, valstr, 64 - 1);
+        valstr[strlen(valstr)] = '\0';
+        close(fd);
+    } else {
+        log_error("unable to open file %s\n", path);
+        return -1;
+    }
+    if (sscanf(valstr, "%u", &val) < 1) {
+        log_error("unable to get pts from: %s", valstr);
+        return -1;
+    }
+    *value = val;
+    return 0;
+}
+
+int msync_session_get_disc_thres(int session_id, uint32_t *min, uint32_t *max)
+{
+    char name[64];
+
+    if (snprintf(name, sizeof(name),
+            "/sys/class/avsync_session%d/disc_thres_min", session_id) < 0)
+        return -1;
+    if (get_sysfs_uint32(name, min))
+        return -1;
+
+    if (snprintf(name, sizeof(name),
+            "/sys/class/avsync_session%d/disc_thres_max", session_id) < 0)
+        return -1;
+    if (get_sysfs_uint32(name, max))
+        return -1;
+
+    return 0;
 }

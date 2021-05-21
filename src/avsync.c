@@ -106,6 +106,8 @@ struct  av_sync_session {
     /* pcr master, IPTV only */
     bool quit_poll;
     enum sync_mode active_mode;
+    uint32_t disc_thres_min;
+    uint32_t disc_thres_max;
 
     /* error detection */
     uint32_t last_poptime;
@@ -120,7 +122,8 @@ struct  av_sync_session {
 #define MAX_FRAME_NUM 32
 #define DEFAULT_START_THRESHOLD 2
 #define TIME_UNIT90K    (90000)
-#define AV_DISC_THRES_MIN (TIME_UNIT90K * 3)
+#define AV_DISC_THRES_MIN (TIME_UNIT90K / 3)
+#define AV_DISC_THRES_MAX (TIME_UNIT90K * 10)
 #define A_ADJ_THREDHOLD_HB (900 * 6) //60ms
 #define A_ADJ_THREDHOLD_LB (900 * 2) //20ms
 #define AV_PATTERN_RESET_THRES (TIME_UNIT90K / 10)
@@ -213,10 +216,17 @@ static void* create_internal(int session_id,
     avsync->pause_pts = AV_SYNC_INVALID_PAUSE_PTS;
     avsync->vsync_interval = -1;
     avsync->last_disc_pts = -1;
+    if (msync_session_get_disc_thres(session_id,
+                &avsync->disc_thres_min, &avsync->disc_thres_max)) {
+        log_error("fail to get disc thres", dev_name, errno);
+        avsync->disc_thres_min = AV_DISC_THRES_MIN;
+        avsync->disc_thres_max = AV_DISC_THRES_MAX;
+    }
 
     pthread_mutex_init(&avsync->lock, NULL);
-    log_info("[%d] mode %d type %d start_thres %d",
-        session_id, mode, type, start_thres);
+    log_info("[%d] mode %d type %d start_thres %d disc_thres %u/%u",
+        session_id, mode, type, start_thres,
+        avsync->disc_thres_min, avsync->disc_thres_max);
 
     snprintf(dev_name, sizeof(dev_name), "/dev/%s%d", SESSION_DEV, session_id);
     avsync->fd = open(dev_name, O_RDONLY | O_CLOEXEC);
@@ -511,8 +521,8 @@ struct vframe *av_sync_pop_frame(void *sync)
 
         peek_item(avsync->frame_q, (void **)&next_frame, 1);
         if (next_frame)
-            log_debug("[%d]cur_f %u next_f %u",
-                avsync->session_id, frame->pts, next_frame->pts);
+            log_debug("[%d]cur_f %u next_f %u size %d",
+                avsync->session_id, frame->pts, next_frame->pts, queue_size(avsync->frame_q));
         if (frame_expire(avsync, systime, interval,
                 frame, next_frame, toggle_cnt)) {
             log_debug("[%d]cur_f %u expire", avsync->session_id, frame->pts);
@@ -632,7 +642,7 @@ static bool frame_expire(struct av_sync_session* avsync,
     log_trace("[%d]systime:%u phase:%u correct:%u fpts:%u",
             avsync->session_id, systime,
             avsync->phase_set?avsync->phase:0, pts_correction, fpts);
-    if (abs_diff(systime, fpts) > AV_DISC_THRES_MIN &&
+    if (abs_diff(systime, fpts) > avsync->disc_thres_min &&
             avsync->first_frame_toggled) {
         /* ignore discontinity under pause */
         if (avsync->paused)
@@ -646,7 +656,7 @@ static bool frame_expire(struct av_sync_session* avsync,
             avsync->last_pts = fpts;
             if (time_diff(&now, &avsync->sync_lost_print_time) >=
                 SYNC_LOST_PRINT_THRESHOLD) {
-                log_warn("[%d]sync lost systime:%x fpts:%x lost:%u",
+                log_warn("[%d]sync lost systime:%u fpts:%u lost:%u",
                     avsync->session_id, systime, fpts, avsync->sync_lost_cnt);
                 avsync->sync_lost_cnt = 0;
                 gettimeofday(&avsync->sync_lost_print_time, NULL);
@@ -679,13 +689,14 @@ static bool frame_expire(struct av_sync_session* avsync,
             /* catch up PCR */
             return true;
         } else if (LIVE_MODE(avsync->mode) && avsync->last_disc_pts != fpts) {
-            /* vpts wrapping */
+            /* vpts wrapping or vpts gapping */
             log_info ("[%d]video disc %u --> %u",
                     avsync->session_id, systime, fpts);
             msync_session_set_video_dis(avsync->fd, fpts);
             avsync->last_disc_pts = fpts;
-            /* clean up frames */
-            return true;
+            /* clean up frames for wrapping case */
+            if ((int)(fpts - systime) > avsync->disc_thres_max)
+                return true;
         }
     }
 
@@ -693,7 +704,7 @@ static bool frame_expire(struct av_sync_session* avsync,
     if (abs_diff(systime, fpts) > AV_PATTERN_RESET_THRES &&
             avsync->first_frame_toggled) {
         reset_pattern(avsync->pattern_detector);
-        log_warn("sync pattern reset sys:%x fpts:%x",
+        log_warn("sync pattern reset sys:%u fpts:%u",
                     systime, fpts);
     }
 
@@ -1058,7 +1069,7 @@ done:
         avsync->apts = pts;
         if (!avsync->in_audio_switch) {
             msync_session_update_apts(avsync->fd, systime, pts, 0);
-            log_info("[%d]return %d sys %u - pts %u = %d",
+            log_debug("[%d]return %d sys %u - pts %u = %d",
                     avsync->session_id, action, systime, pts, systime - pts);
         } else if(avsync->audio_switch_state == AUDIO_SWITCH_STAT_FINISH) {
             msync_session_update_apts(avsync->fd, systime, pts, 0);
@@ -1080,7 +1091,7 @@ done:
             msync_session_set_audio_dis(avsync->fd, pts);
             avsync->last_disc_pts = pts;
         }
-        log_info("[%d]return %d sys %u - pts %u = %d",
+        log_debug("[%d]return %d sys %u - pts %u = %d",
                 avsync->session_id, action, systime, pts, systime - pts);
     }
 
