@@ -980,6 +980,7 @@ int av_sync_audio_render(
             log_info("[%d] audio change insert %d ms sys %u pts %u", avsync->session_id,
                      (int)(pts - systime)/90, systime, pts);
         }
+        action = AV_SYNC_AA_RENDER;
         goto done;
     }
 
@@ -1072,7 +1073,8 @@ done:
         }
     } else {
         if (abs_diff(systime, pts) > AV_DISC_THRES_MIN &&
-                    avsync->last_disc_pts != pts) {
+                    avsync->last_disc_pts != pts &&
+                    !avsync->in_audio_switch) {
             log_info ("[%d]audio disc %u --> %u",
                     avsync->session_id, systime, pts);
             msync_session_set_audio_dis(avsync->fd, pts);
