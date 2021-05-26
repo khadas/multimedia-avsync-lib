@@ -130,7 +130,7 @@ struct  av_sync_session {
 #define SYNC_LOST_PRINT_THRESHOLD 10000000 //10 seconds In micro seconds
 #define LIVE_MODE(mode) ((mode) == AV_SYNC_MODE_PCR_MASTER || (mode) == AV_SYNC_MODE_IPTV)
 
-#define STREAM_DISC_THRES (TIME_UNIT90K * 10)
+#define STREAM_DISC_THRES (TIME_UNIT90K / 10)
 #define OUTLIER_MAX_CNT 8
 
 static uint64_t time_diff (struct timeval *b, struct timeval *a);
@@ -452,6 +452,8 @@ int av_sync_push_frame(void *sync , struct vframe *frame)
         }
     }
 
+    if (frame->duration == -1)
+        frame->duration = 0;
     frame->hold_period = 0;
     ret = queue_item(avsync->frame_q, frame);
     if (avsync->state == AV_SYNC_STAT_INIT &&
@@ -583,8 +585,10 @@ exit:
         if (enter_last_frame != avsync->last_frame)
             log_debug("[%d]pop %u", avsync->session_id, avsync->last_frame->pts);
         log_trace("[%d]pop %u", avsync->session_id, avsync->last_frame->pts);
-        msync_session_update_vpts(avsync->fd, systime,
-            avsync->last_frame->pts, interval * avsync->delay);
+        /* don't update vpts for out_lier */
+        if (avsync->last_frame->duration != -1)
+            msync_session_update_vpts(avsync->fd, systime,
+                avsync->last_frame->pts, interval * avsync->delay);
     } else
         if (enter_last_frame != avsync->last_frame)
             log_debug("[%d]pop (nil)", avsync->session_id);
@@ -666,9 +670,10 @@ static bool frame_expire(struct av_sync_session* avsync,
 
         if (avsync->state == AV_SYNC_STAT_SYNC_SETUP &&
                 LIVE_MODE(avsync->mode) &&
-                abs_diff(systime, fpts) > STREAM_DISC_THRES) {
+                abs_diff(avsync->last_pts, fpts) > STREAM_DISC_THRES) {
             /* outlier by stream error */
             avsync->outlier_cnt++;
+            frame->duration = -1;
             if (avsync->outlier_cnt < OUTLIER_MAX_CNT) {
                 log_info("render outlier %u", fpts);
                 return true;
@@ -912,7 +917,7 @@ avs_start_ret av_sync_audio_start(
     if (start_mode == AVS_START_SYNC) {
         ret = AV_SYNC_ASTART_SYNC;
         avsync->session_started = true;
-        avsync->state = AV_SYNC_STAT_SYNC_SETUP;
+        avsync->state = AV_SYNC_STAT_RUNNING;
     } else if (start_mode == AVS_START_ASYNC) {
         ret = AV_SYNC_ASTART_ASYNC;
         avsync->state = AV_SYNC_STAT_RUNNING;
@@ -964,6 +969,7 @@ int av_sync_audio_render(
     struct audio_policy *policy)
 {
     int ret = 0;
+    bool out_lier = false;
     uint32_t systime;
     struct av_sync_session *avsync = (struct av_sync_session *)sync;
     avs_audio_action action = AA_SYNC_AA_MAX;
@@ -1031,6 +1037,7 @@ int av_sync_audio_render(
         log_info("[%d]ignore outlier %u", avsync->session_id, pts);
         pts = systime;
         action = AV_SYNC_AA_RENDER;
+        out_lier = true;
         goto done;
     }
 
@@ -1068,7 +1075,8 @@ done:
     if (action == AV_SYNC_AA_RENDER) {
         avsync->apts = pts;
         if (!avsync->in_audio_switch) {
-            msync_session_update_apts(avsync->fd, systime, pts, 0);
+            if (!out_lier)
+                msync_session_update_apts(avsync->fd, systime, pts, 0);
             log_debug("[%d]return %d sys %u - pts %u = %d",
                     avsync->session_id, action, systime, pts, systime - pts);
         } else if(avsync->audio_switch_state == AUDIO_SWITCH_STAT_FINISH) {
