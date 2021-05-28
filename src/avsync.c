@@ -997,7 +997,6 @@ int av_sync_audio_render(
             log_info("[%d] audio change insert %d ms sys %u pts %u", avsync->session_id,
                      (int)(pts - systime)/90, systime, pts);
         }
-        action = AV_SYNC_AA_RENDER;
         goto done;
     }
 
