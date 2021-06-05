@@ -389,11 +389,25 @@ int av_sync_pause(void *sync, bool pause)
                 &v_active, &a_active, &v_timeout,
                 &avsync->in_audio_switch);
 
-    /* ignore */
-    if (avsync->mode == AV_SYNC_MODE_AMASTER
-        && avsync->type == AV_SYNC_TYPE_VIDEO
-        && a_active && !avsync->in_audio_switch)
+    /* ignore only when video try to pause when audio is acive, on which
+       the control of the STC will be relays.
+       When resume,it can do always as it is possible that video just
+       paused earlier without audio yet,then audio added later before resume.
+       We shall not igore that otherwise it could cause video freeze.       */
+    if (avsync->mode == AV_SYNC_MODE_AMASTER &&
+        avsync->type == AV_SYNC_TYPE_VIDEO &&
+        a_active &&
+        !avsync->in_audio_switch) {
+        if (!pause) {
+            log_info("[%d] clear video pause when audio active",
+                     avsync->session_id);
+            avsync->paused = pause;
+        } else {
+            log_info("[%d] ignore the pause from video when audio active",
+                     avsync->session_id);
+        }
         return 0;
+    }
 
     if (avsync->in_audio_switch && avsync->type == AV_SYNC_TYPE_AUDIO) {
         log_info("[%d] ignore the pause from audio", avsync->session_id);
