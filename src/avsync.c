@@ -130,6 +130,7 @@ struct  av_sync_session {
 
     //video freerun with rate control
     uint32_t last_r_syst;
+    bool debug_freerun;
 
     //Audio dropping detection
     uint32_t audio_drop_cnt;
@@ -370,7 +371,8 @@ void av_sync_destroy(void *sync)
             pthread_join(avsync->poll_thread, NULL);
             avsync->poll_thread = 0;
         }
-        trigger_audio_start_cb(avsync, AV_SYNC_ASCB_STOP);
+        if (avsync->type == AV_SYNC_TYPE_AUDIO)
+            trigger_audio_start_cb(avsync, AV_SYNC_ASCB_STOP);
     }
 
     if (avsync->session_started) {
@@ -482,8 +484,8 @@ int av_sync_push_frame(void *sync , struct vframe *frame)
             return -1;
         }
 
-        if (avsync->mode == AV_SYNC_MODE_PCR_MASTER ||
-            avsync->mode == AV_SYNC_MODE_IPTV) {
+        /* debug */
+        {
             int ret;
 
             ret = pthread_create(&avsync->poll_thread, NULL, poll_thread, avsync);
@@ -1264,19 +1266,21 @@ static void handle_mode_change_a(struct av_sync_session* avsync,
 static void handle_mode_change_v(struct av_sync_session* avsync,
     bool v_active, bool a_active, bool v_timeout)
 {
+    struct session_debug debug;
+
     log_info("[%d]amode mode %d %d v/a %d/%d", avsync->session_id,
             avsync->active_mode, avsync->mode, v_active, a_active);
-    if (avsync->active_mode == AV_SYNC_MODE_PCR_MASTER) {
-        struct session_debug debug;
-        if (!msync_session_get_debug_mode(avsync->fd, &debug)) {
-            if (debug.debug_freerun) {
-                avsync->backup_mode = avsync->mode;
-                avsync->mode = AV_SYNC_MODE_FREE_RUN;
-                log_warn("[%d]video to freerun mode", avsync->session_id);
-            } else
-                avsync->mode = avsync->backup_mode;
-                log_warn("[%d]video back to mode %d",
-                        avsync->session_id, avsync->mode);
+    if (!msync_session_get_debug_mode(avsync->fd, &debug)) {
+        if (debug.debug_freerun) {
+            avsync->backup_mode = avsync->mode;
+            avsync->mode = AV_SYNC_MODE_FREE_RUN;
+            avsync->debug_freerun = true;
+            log_warn("[%d]video to freerun mode", avsync->session_id);
+        } else if (avsync->debug_freerun) {
+            avsync->mode = avsync->backup_mode;
+            avsync->debug_freerun = false;
+            log_warn("[%d]video back to mode %d",
+                    avsync->session_id, avsync->mode);
         }
     }
 }
