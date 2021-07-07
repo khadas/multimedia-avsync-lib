@@ -41,6 +41,7 @@ enum audio_switch_state_ {
     AUDIO_SWITCH_STAT_RESET = 1,
     AUDIO_SWITCH_STAT_START = 2,
     AUDIO_SWITCH_STAT_FINISH = 3,
+    AUDIO_SWITCH_STAT_AGAIN = 4,
 };
 
 #define SESSION_DEV "avsync_s"
@@ -998,20 +999,48 @@ avs_start_ret av_sync_audio_start(
 {
     struct av_sync_session *avsync = (struct av_sync_session *)sync;
     uint32_t start_mode;
+    uint32_t systime;
     avs_start_ret ret = AV_SYNC_ASTART_ERR;
     bool create_poll_t = false;
 
     if (!avsync)
         return ret;
 
-    if (msync_session_set_audio_start(avsync->fd, pts, delay, &start_mode))
-        log_error("[%d]fail to set audio start", avsync->session_id);
+    log_info("%d av_sync_audio_start pts(ms) %d delay %d ms",
+             avsync->session_id, (int)pts/90, (int)delay/90);
 
-    if (avsync->in_audio_switch
-         && avsync->audio_switch_state == AUDIO_SWITCH_STAT_RESET) {
-        log_info("%d audio_switch_state to start start mode %d",
-                avsync->session_id, start_mode);
-        avsync->audio_switch_state = AUDIO_SWITCH_STAT_START;
+    if (avsync->in_audio_switch &&
+        avsync->audio_switch_state == AUDIO_SWITCH_STAT_AGAIN)
+    {
+        start_mode = AVS_START_SYNC;
+        log_info("%d AUDIO_SWITCH_STAT_AGAIN", avsync->session_id);
+    } else {
+        if (msync_session_set_audio_start(avsync->fd, pts, delay, &start_mode))
+            log_error("[%d]fail to set audio start", avsync->session_id);
+    }
+    if (avsync->in_audio_switch &&
+        (avsync->audio_switch_state == AUDIO_SWITCH_STAT_RESET ||
+         avsync->audio_switch_state == AUDIO_SWITCH_STAT_AGAIN)) {
+        msync_session_get_wall(avsync->fd, &systime, NULL);
+        if ((int)(systime - pts) > A_ADJ_THREDHOLD_LB &&
+            start_mode == AVS_START_SYNC) {
+            log_info("%d audio_switch audio need drop first.ahead %d ms",
+                avsync->session_id, (int)(systime - pts)/90);
+            ret = AV_SYNC_ASTART_AGAIN;
+            avsync->audio_switch_state = AUDIO_SWITCH_STAT_AGAIN;
+            goto exit;
+        }
+        else {
+            int diff = (int)(pts - systime);
+            log_info("%d audio_switch_state to start mode %d diff %d ms",
+                avsync->session_id, start_mode, diff/90);
+            avsync->audio_switch_state = AUDIO_SWITCH_STAT_START;
+            if (diff < A_ADJ_THREDHOLD_LB) {
+                log_info("%d orig mode %d already close enough direct start",
+                               avsync->session_id, start_mode);
+                start_mode = AVS_START_SYNC;
+            }
+        }
     }
 
     if (start_mode == AVS_START_SYNC) {
@@ -1053,7 +1082,6 @@ avs_start_ret av_sync_audio_start(
         }
     }
     if (LIVE_MODE(avsync->mode)) {
-        uint32_t systime;
         msync_session_get_wall(avsync->fd, &systime, NULL);
         log_info("[%d]return %u w %u pts %u d %u",
                 avsync->session_id, ret, systime, pts, delay);
