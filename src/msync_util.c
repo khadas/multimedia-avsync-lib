@@ -283,11 +283,13 @@ int msync_session_set_video_stop(int fd)
 
 int msync_session_get_stat (int fd, enum sync_mode *mode,
         bool *v_active, bool *a_active, bool *v_timeout,
-        bool *a_switch)
+        bool *a_switch, enum src_flag flag)
 {
     int rc;
     struct session_sync_stat stat;
 
+    memset(&stat, 0, sizeof(stat));
+    stat.flag = flag;
     rc = ioctl(fd, AMSYNCS_IOC_GET_SYNC_STAT, &stat);
     if (rc) {
         log_error("fd[%d] get state errno:%d", fd, errno);

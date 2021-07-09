@@ -69,6 +69,9 @@ struct  av_sync_session {
     pts90K last_pts;
     struct vframe *last_frame;
 
+    /* pts of last pushed frame */
+    pts90K last_q_pts;
+
     bool  first_frame_toggled;
     bool  paused;
     enum sync_state state;
@@ -130,6 +133,7 @@ struct  av_sync_session {
 
     //video freerun with rate control
     uint32_t last_r_syst;
+    bool debug_freerun;
 
     //Audio dropping detection
     uint32_t audio_drop_cnt;
@@ -236,6 +240,7 @@ static void* create_internal(int session_id,
     avsync->last_disc_pts = -1;
     avsync->last_log_syst = -1;
     avsync->last_pts = -1;
+    avsync->last_q_pts = -1;
     avsync->last_wall = -1;
     avsync->fps_interval = -1;
     avsync->last_r_syst = -1;
@@ -280,7 +285,7 @@ static void* create_internal(int session_id,
             goto err3;
         }
         if (msync_session_get_stat(avsync->fd, &avsync->active_mode,
-                NULL, NULL, NULL, &avsync->in_audio_switch)) {
+                NULL, NULL, NULL, &avsync->in_audio_switch, SRC_A)) {
             log_error("get state");
             goto err3;
         }
@@ -370,7 +375,8 @@ void av_sync_destroy(void *sync)
             pthread_join(avsync->poll_thread, NULL);
             avsync->poll_thread = 0;
         }
-        trigger_audio_start_cb(avsync, AV_SYNC_ASCB_STOP);
+        if (avsync->type == AV_SYNC_TYPE_AUDIO)
+            trigger_audio_start_cb(avsync, AV_SYNC_ASCB_STOP);
     }
 
     if (avsync->session_started) {
@@ -424,7 +430,7 @@ int av_sync_pause(void *sync, bool pause)
 
      rc = msync_session_get_stat(avsync->fd, &avsync->active_mode,
                 &v_active, &a_active, &v_timeout,
-                &avsync->in_audio_switch);
+                &avsync->in_audio_switch, SRC_A);
 
     /* ignore only when video try to pause when audio is acive, on which
        the control of the STC will be relays.
@@ -482,8 +488,8 @@ int av_sync_push_frame(void *sync , struct vframe *frame)
             return -1;
         }
 
-        if (avsync->mode == AV_SYNC_MODE_PCR_MASTER ||
-            avsync->mode == AV_SYNC_MODE_IPTV) {
+        /* for debugging */
+        {
             int ret;
 
             ret = pthread_create(&avsync->poll_thread, NULL, poll_thread, avsync);
@@ -495,13 +501,14 @@ int av_sync_push_frame(void *sync , struct vframe *frame)
         }
     }
 
-    if (!peek_item(avsync->frame_q, (void **)&prev, 0)) {
-        if (prev->pts == frame->pts && avsync->mode == AV_SYNC_MODE_AMASTER) {
+    if (avsync->last_q_pts != -1) {
+        if (avsync->last_q_pts == frame->pts && avsync->mode == AV_SYNC_MODE_AMASTER) {
+            /* TODO: wrong, should remove from back of queue */
             dqueue_item(avsync->frame_q, (void **)&prev);
             prev->free(prev);
             log_info ("[%d]drop frame with same pts %u", avsync->session_id, frame->pts);
-        } else if (LIVE_MODE(avsync->mode) && avsync->fps_cnt < 100) {
-            int32_t interval = frame->pts - prev->pts;
+        } else if (avsync->fps_cnt < 100) {
+            int32_t interval = frame->pts - avsync->last_q_pts;
 
             if (interval > 0 && interval <= 4500) {
                 if (avsync->fps_interval_acc == -1) {
@@ -521,6 +528,7 @@ int av_sync_push_frame(void *sync , struct vframe *frame)
     if (frame->duration == -1)
         frame->duration = 0;
     frame->hold_period = 0;
+    avsync->last_q_pts = frame->pts;
     ret = queue_item(avsync->frame_q, frame);
     if (avsync->state == AV_SYNC_STAT_INIT &&
         queue_size(avsync->frame_q) >= avsync->start_thres) {
@@ -688,14 +696,21 @@ static bool frame_expire(struct av_sync_session* avsync,
     bool expire = false;
     uint32_t pts_correction = avsync->delay * interval;
 
-    if (avsync->mode == AV_SYNC_MODE_FREE_RUN)
-        return true;
-
     if (avsync->paused && avsync->pause_pts == AV_SYNC_INVALID_PAUSE_PTS)
         return false;
 
     if (avsync->pause_pts == AV_SYNC_STEP_PAUSE_PTS)
         return true;
+
+    if (avsync->mode == AV_SYNC_MODE_FREE_RUN) {
+        /* render according to FPS */
+        if (!VALID_TS(avsync->last_r_syst) ||
+                (int)(systime - avsync->last_r_syst) >= avsync->fps_interval) {
+            avsync->last_r_syst = systime;
+            return true;
+        }
+        return false;
+    }
 
     if (!fpts) {
         if (avsync->last_frame) {
@@ -1236,8 +1251,10 @@ static void handle_mode_change_a(struct av_sync_session* avsync,
             if (speed != avsync->speed)
                 log_info("[%d]new rate %f", avsync->session_id, speed);
             if (speed == 1.0) {
-                avsync->mode = avsync->backup_mode;
-                log_info("[%d]audio back to mode %d", avsync->session_id, avsync->mode);
+                if (avsync->mode != avsync->backup_mode) {
+                    avsync->mode = avsync->backup_mode;
+                    log_info("[%d]audio back to mode %d", avsync->session_id, avsync->mode);
+                }
             } else {
                 avsync->backup_mode = avsync->mode;
                 avsync->mode = AV_SYNC_MODE_FREE_RUN;
@@ -1248,12 +1265,14 @@ static void handle_mode_change_a(struct av_sync_session* avsync,
     } else if (avsync->active_mode == AV_SYNC_MODE_PCR_MASTER) {
         struct session_debug debug;
         if (!msync_session_get_debug_mode(avsync->fd, &debug)) {
-            if (debug.debug_freerun) {
+            if (debug.debug_freerun && !avsync->debug_freerun) {
                 avsync->backup_mode = avsync->mode;
                 avsync->mode = AV_SYNC_MODE_FREE_RUN;
+                avsync->debug_freerun = true;
                 log_warn("[%d]audio to freerun mode", avsync->session_id);
-            } else {
+            } else if (!debug.debug_freerun && avsync->debug_freerun) {
                 avsync->mode = avsync->backup_mode;
+                avsync->debug_freerun = false;
                 log_warn("[%d]audio back to mode %d",
                         avsync->session_id, avsync->mode);
             }
@@ -1264,19 +1283,21 @@ static void handle_mode_change_a(struct av_sync_session* avsync,
 static void handle_mode_change_v(struct av_sync_session* avsync,
     bool v_active, bool a_active, bool v_timeout)
 {
+    struct session_debug debug;
+
     log_info("[%d]amode mode %d %d v/a %d/%d", avsync->session_id,
             avsync->active_mode, avsync->mode, v_active, a_active);
-    if (avsync->active_mode == AV_SYNC_MODE_PCR_MASTER) {
-        struct session_debug debug;
-        if (!msync_session_get_debug_mode(avsync->fd, &debug)) {
-            if (debug.debug_freerun) {
-                avsync->backup_mode = avsync->mode;
-                avsync->mode = AV_SYNC_MODE_FREE_RUN;
-                log_warn("[%d]video to freerun mode", avsync->session_id);
-            } else
-                avsync->mode = avsync->backup_mode;
-                log_warn("[%d]video back to mode %d",
-                        avsync->session_id, avsync->mode);
+    if (!msync_session_get_debug_mode(avsync->fd, &debug)) {
+        if (debug.debug_freerun && !avsync->debug_freerun) {
+            avsync->backup_mode = avsync->mode;
+            avsync->mode = AV_SYNC_MODE_FREE_RUN;
+            avsync->debug_freerun = true;
+            log_warn("[%d]video to freerun mode", avsync->session_id);
+        } else if (!debug.debug_freerun && avsync->debug_freerun) {
+            avsync->mode = avsync->backup_mode;
+            avsync->debug_freerun = false;
+            log_warn("[%d]video back to mode %d",
+                    avsync->session_id, avsync->mode);
         }
     }
 }
@@ -1291,9 +1312,16 @@ static void * poll_thread(void * arg)
       .events =  POLLIN | POLLRDNORM | POLLPRI | POLLOUT | POLLWRNORM,
       .fd = avsync->fd,
     };
+    enum src_flag sflag = SRC_A;
 
     prctl (PR_SET_NAME, "avs_poll");
     log_info("[%d]enter", avsync->session_id);
+
+    if (avsync->type == AV_SYNC_TYPE_AUDIO)
+        sflag = SRC_A;
+    else if (avsync->type == AV_SYNC_TYPE_VIDEO)
+        sflag = SRC_V;
+
     while (!avsync->quit_poll) {
         for (;;) {
           ret = poll(&pfd, 1, 10);
@@ -1316,12 +1344,13 @@ static void * poll_thread(void * arg)
             bool v_active, a_active, v_timeout;
 
             msync_session_get_stat(fd, &avsync->active_mode,
-                &v_active, &a_active, &v_timeout, &avsync->in_audio_switch);
+                &v_active, &a_active, &v_timeout, &avsync->in_audio_switch, sflag);
 
             if (avsync->type == AV_SYNC_TYPE_AUDIO)
                 handle_mode_change_a(avsync, v_active, a_active, v_timeout);
             else if (avsync->type == AV_SYNC_TYPE_VIDEO)
                 handle_mode_change_v(avsync, v_active, a_active, v_timeout);
+            usleep(10000);
         }
     }
 exit:
@@ -1389,7 +1418,7 @@ int av_sync_set_audio_switch(void *sync,  bool start)
         return -1;
     if (msync_session_get_stat(avsync->fd, &avsync->active_mode,
                 &v_active, &a_active,
-                &v_timeout, &avsync->in_audio_switch)) {
+                &v_timeout, &avsync->in_audio_switch, SRC_A)) {
         log_error("[%d] can not get session state",
                 avsync->session_id);
         return -1;
@@ -1416,7 +1445,7 @@ int av_sync_get_audio_switch(void *sync,  bool *start)
     if (!avsync)
         return -1;
     if (msync_session_get_stat(avsync->fd, &avsync->active_mode,
-                NULL, NULL, NULL, &avsync->in_audio_switch)) {
+                NULL, NULL, NULL, &avsync->in_audio_switch, SRC_A)) {
         log_error("[%d] can not audio seamless switch state",
                 avsync->session_id);
         return -1;
