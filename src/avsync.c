@@ -55,6 +55,7 @@ struct  av_sync_session {
     enum sync_mode backup_mode;
     enum sync_type type;
     uint32_t start_policy;
+    int timeout;
 
     /* playback time, will stop increasing during pause */
     pts90K vpts;
@@ -239,6 +240,8 @@ static void* create_internal(int session_id,
     avsync->last_wall = -1;
     avsync->fps_interval = -1;
     avsync->last_r_syst = -1;
+    avsync->timeout = -1;
+
     if (msync_session_get_disc_thres(session_id,
                 &avsync->disc_thres_min, &avsync->disc_thres_max)) {
         log_error("fail to get disc thres", dev_name, errno);
@@ -275,7 +278,7 @@ static void* create_internal(int session_id,
             goto err3;
         }
         avsync->backup_mode = avsync->mode;
-        if (msync_session_get_start_policy(avsync->fd, &avsync->start_policy)) {
+        if (msync_session_get_start_policy(avsync->fd, &avsync->start_policy, &avsync->timeout)) {
             log_error("get policy");
             goto err3;
         }
@@ -393,19 +396,20 @@ void av_sync_destroy(void *sync)
     free(avsync);
 }
 
-int avs_sync_set_start_policy(void *sync, enum sync_start_policy policy)
+int avs_sync_set_start_policy(void *sync, struct start_policy* st_policy)
 {
     struct av_sync_session *avsync = (struct av_sync_session *)sync;
 
     if (!avsync || !avsync->fd)
         return -1;
 
-    log_info("[%d]policy %u --> %u", avsync->start_policy, policy);
-    avsync->start_policy = policy;
+    log_info("[%d]policy %u --> %u, timeout %d --> %d", avsync->start_policy, st_policy->policy, avsync->timeout, st_policy->timeout);
+    avsync->start_policy = st_policy->policy;
+    avsync->timeout = st_policy->timeout;
     /* v_peek will be handled by libamlavsync */
-    if (policy != AV_SYNC_START_NONE &&
-        policy != AV_SYNC_START_V_PEEK)
-        return msync_session_set_start_policy(avsync->fd, policy);
+    if (st_policy->policy != AV_SYNC_START_NONE &&
+        st_policy->policy != AV_SYNC_START_V_PEEK)
+        return msync_session_set_start_policy(avsync->fd, st_policy->policy, st_policy->timeout);
 
     return 0;
 }
@@ -471,7 +475,7 @@ int av_sync_push_frame(void *sync , struct vframe *frame)
 
     if (!avsync->frame_q) {
         /* policy should be final now */
-        if (msync_session_get_start_policy(avsync->fd, &avsync->start_policy)) {
+        if (msync_session_get_start_policy(avsync->fd, &avsync->start_policy, &avsync->timeout)) {
             log_error("[%d]get policy", avsync->session_id);
             return -1;
         }
