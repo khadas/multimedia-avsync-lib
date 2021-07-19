@@ -123,6 +123,12 @@ struct video_config {
     int delay;
 };
 
+struct start_policy {
+    enum sync_start_policy policy;
+    /*timeout in ms */
+    int timeout;
+};
+
 /* Open a new session and create the ID
  * Params:
  *   @session_id: session ID allocated if success
@@ -195,7 +201,7 @@ int av_sync_video_config(void *sync, struct video_config* config);
  * Return:
  *   0 for OK, or error code
  */
-int avs_sync_set_start_policy(void *sync, enum sync_start_policy policy);
+int avs_sync_set_start_policy(void *sync, struct start_policy* st_policy);
 
 /* Pause/Resume AV sync module.
  * It will return last frame in @av_sync_pop_frame() in pause state

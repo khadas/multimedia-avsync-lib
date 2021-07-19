@@ -23,8 +23,8 @@ void msync_destory_session(int id);
 
 int msync_session_set_mode(int fd, enum sync_mode mode);
 int msync_session_get_mode(int fd, enum sync_mode *mode);
-int msync_session_get_start_policy(int fd, uint32_t *policy);
-int msync_session_set_start_policy(int fd, uint32_t policy);
+int msync_session_get_start_policy(int fd, uint32_t *policy, int *timeout);
+int msync_session_set_start_policy(int fd, uint32_t policy, int timeout);
 int msync_session_set_pause(int fd, bool pause);
 int msync_session_set_video_start(int fd, pts90K pts);
 int msync_session_get_wall(int fd, uint32_t *wall, uint32_t *interval);

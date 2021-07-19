@@ -45,6 +45,7 @@ static void test_a(bool sync)
     int session, session_id;
     avs_start_ret ret;
     int adjust = 0;
+    struct start_policy st_policy;
 
     session = av_sync_open_session(&session_id);
     if (session < 0) {
@@ -60,7 +61,9 @@ static void test_a(bool sync)
 
     if (!sync) {
         /* let it timeout */
-        ret = avs_sync_set_start_policy(handle, AV_SYNC_START_ALIGN);
+        st_policy.policy = AV_SYNC_START_ALIGN;
+        st_policy.timeout = 2000;
+        ret = avs_sync_set_start_policy(handle, &st_policy);
         if (ret) {
             log_error("policy fail");
             goto exit2;

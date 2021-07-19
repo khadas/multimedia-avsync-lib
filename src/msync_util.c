@@ -87,42 +87,48 @@ int msync_session_get_mode(int fd, enum sync_mode *mode)
     return rc;
 }
 
-int msync_session_get_start_policy(int fd, uint32_t *policy)
+int msync_session_get_start_policy(int fd, uint32_t *policy, int *timeout)
 {
     int rc;
-    uint32_t kpolicy;
+    struct ker_start_policy kpolicy;
 
     rc = ioctl(fd, AMSYNCS_IOC_GET_START_POLICY, &kpolicy);
     if (rc)
         log_error("session[%d] get start policy errno:%d", fd, errno);
 
-    if (kpolicy == AMSYNC_START_V_FIRST)
+    if (kpolicy.policy == AMSYNC_START_V_FIRST)
         *policy = AV_SYNC_START_V_FIRST;
-    else if (kpolicy == AMSYNC_START_A_FIRST)
+    else if (kpolicy.policy == AMSYNC_START_A_FIRST)
         *policy = AV_SYNC_START_A_FIRST;
-    else if (kpolicy == AMSYNC_START_ASAP)
+    else if (kpolicy.policy == AMSYNC_START_ASAP)
         *policy = AV_SYNC_START_ASAP;
-    else if (kpolicy == AMSYNC_START_ALIGN)
+    else if (kpolicy.policy == AMSYNC_START_ALIGN)
         *policy = AV_SYNC_START_ALIGN;
     else
         *policy = AV_SYNC_START_NONE;
+
+    if (0 == rc)
+        *timeout = kpolicy.timeout;
+
     return rc;
 }
-int msync_session_set_start_policy(int fd, uint32_t policy)
+int msync_session_set_start_policy(int fd, uint32_t policy, int timeout)
 {
     int rc;
-    uint32_t kpolicy;
+    struct ker_start_policy kpolicy;
 
     if (policy == AV_SYNC_START_V_FIRST)
-        kpolicy = AMSYNC_START_V_FIRST;
+        kpolicy.policy = AMSYNC_START_V_FIRST;
     else if (policy == AV_SYNC_START_A_FIRST)
-        kpolicy = AMSYNC_START_A_FIRST;
+        kpolicy.policy = AMSYNC_START_A_FIRST;
     else if (policy == AV_SYNC_START_ASAP)
-        kpolicy = AMSYNC_START_ASAP;
+        kpolicy.policy = AMSYNC_START_ASAP;
     else if (policy == AV_SYNC_START_ALIGN)
-        kpolicy = AMSYNC_START_ALIGN;
+        kpolicy.policy = AMSYNC_START_ALIGN;
     else
         return -1;
+
+    kpolicy.timeout = timeout;
 
     rc = ioctl(fd, AMSYNCS_IOC_SET_START_POLICY, &kpolicy);
     if (rc)
