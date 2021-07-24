@@ -599,6 +599,7 @@ struct vframe *av_sync_pop_frame(void *sync)
             avsync->fps_interval = interval;
         avsync->vsync_interval = interval;
         avsync->phase_set = false;
+        avsync->phase = 0;
         reset_pattern(avsync->pattern_detector);
     }
     while (!peek_item(avsync->frame_q, (void **)&frame, 0)) {
@@ -774,6 +775,7 @@ static bool frame_expire(struct av_sync_session* avsync,
         avsync->outlier_cnt = 0;
         avsync->state = AV_SYNC_STAT_SYNC_LOST;
         avsync->phase_set = false;
+        avsync->phase = 0;
         reset_pattern(avsync->pattern_detector);
 
         if (LIVE_MODE(avsync->mode) && avsync->last_disc_pts != fpts) {
@@ -853,7 +855,7 @@ static bool frame_expire(struct av_sync_session* avsync,
             uint32_t phase_thres = interval / 4;
             if ( systime > fpts && (systime - fpts) < phase_thres) {
                 /* too aligned to current VSYNC, separate them to 1/4 VSYNC */
-                avsync->phase += phase_thres - (systime - fpts);
+                avsync->phase = phase_thres - (systime - fpts);
                 avsync->phase_set = true;
                 log_info("[%d]adjust phase to %d", avsync->session_id, avsync->phase);
             }
@@ -861,7 +863,7 @@ static bool frame_expire(struct av_sync_session* avsync,
                 systime < (fpts + interval) &&
                 (systime - fpts) > interval - phase_thres) {
                 /* too aligned to previous VSYNC, separate them to 1/4 VSYNC */
-                avsync->phase += phase_thres + fpts + interval - systime;
+                avsync->phase = phase_thres + fpts + interval - systime;
                 avsync->phase_set = true;
                 log_info("[%d]adjust phase to %d", avsync->session_id, avsync->phase);
             }
