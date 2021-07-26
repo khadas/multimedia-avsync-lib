@@ -270,7 +270,7 @@ static void* create_internal(int session_id,
     if (avsync->type == AV_SYNC_TYPE_PCR) {
         if (pcr_monitor_init(&avsync->pcr_monitor)) {
             log_error("pcr monitor init");
-            goto err2;
+            goto err3;
         }
     }
 
@@ -281,17 +281,17 @@ static void* create_internal(int session_id,
         avsync->attached = true;
         if (msync_session_get_mode(avsync->fd, &avsync->mode)) {
             log_error("get mode");
-            goto err3;
+            goto err4;
         }
         avsync->backup_mode = avsync->mode;
         if (msync_session_get_start_policy(avsync->fd, &avsync->start_policy, &avsync->timeout)) {
             log_error("get policy");
-            goto err3;
+            goto err4;
         }
         if (msync_session_get_stat(avsync->fd, &avsync->active_mode,
                 NULL, NULL, NULL, &avsync->in_audio_switch, SRC_A)) {
             log_error("get state");
-            goto err3;
+            goto err4;
         }
         if (avsync->in_audio_switch) {
             log_info("audio_switch_state reseted the audio");
@@ -303,9 +303,11 @@ static void* create_internal(int session_id,
     }
 
     return avsync;
-err3:
+err4:
     if (avsync->pcr_monitor)
         pcr_monitor_destroy(avsync->pcr_monitor);
+err3:
+    close(avsync->fd);
 err2:
     destroy_pattern_detector(avsync->pattern_detector);
 err:
