@@ -80,7 +80,7 @@ void correct_pattern(void* handle, struct vframe *frame, struct vframe *nextfram
         pts90K systime, pts90K vsync_interval, bool *expire)
 {
     struct pattern_detector *pd = (struct pattern_detector *)handle;
-    int pattern_range, expected_cur_peroid;
+    int pattern_range, expected_cur_peroid, remain_period;
     int expected_prev_interval;
     int npts = 0;
 
@@ -140,17 +140,25 @@ void correct_pattern(void* handle, struct vframe *frame, struct vframe *nextfram
 
     if (*expire) {
         if (cur_peroid < expected_cur_peroid) {
+            remain_period = expected_cur_peroid - cur_peroid;
             /* 2323232323..2233..2323, prev=2, curr=3,*/
             /* check if next frame will toggle after 3 vsyncs */
             /* 22222...22222 -> 222..2213(2)22...22 */
             /* check if next frame will toggle after 3 vsyncs */
             /* shall only allow one extra interval space to play around */
-            if (((int)(systime + (expected_prev_interval + 1) *
-                        vsync_interval - npts) >= 0) &&
-                ((int)(systime + (expected_prev_interval + 2) *
-                        vsync_interval - npts) < 0)) {
+            if (systime - frame->pts <= 90) {
+                *expire = false;
+                log_debug("hold frame for pattern: %d sys: %u fpts: %u",
+                        pd->detected, systime, frame->pts);
+            } else if (((int)(systime + (remain_period + 1) *
+                        vsync_interval - npts) <= 0) &&
+                ((int)(systime + (remain_period + 2) *
+                        vsync_interval - npts) > 0)) {
                 *expire = false;
                 log_debug("hold frame for pattern: %d", pd->detected);
+            } else {
+                log_debug("not hold frame for pattern: %d sys: %u fpts: %u s-f %u nfps: %u",
+                    pd->detected, systime, frame->pts, systime - frame->pts, npts);
             }
 
 #if 0 // Frame scattering is the right place to adjust the hold time.
