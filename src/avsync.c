@@ -545,7 +545,7 @@ int av_sync_push_frame(void *sync , struct vframe *frame)
 
     if (ret)
         log_error("%s queue fail:%d", ret);
-    log_debug("[%d]push %u", avsync->session_id, frame->pts);
+    log_debug("[%d]push %u, QNum=%d", avsync->session_id, frame->pts, queue_size(avsync->frame_q));
     return ret;
 
 }
@@ -668,7 +668,7 @@ exit:
     if (avsync->last_frame) {
         if (enter_last_frame != avsync->last_frame)
             log_debug("[%d]pop %u", avsync->session_id, avsync->last_frame->pts);
-        log_trace("[%d]pop %u", avsync->session_id, avsync->last_frame->pts);
+        log_trace("[%d]pop=%u, stc=%u, QNum=%d", avsync->session_id, avsync->last_frame->pts, systime, queue_size(avsync->frame_q));
         /* don't update vpts for out_lier */
         if (avsync->last_frame->duration != -1)
             msync_session_update_vpts(avsync->fd, systime,
@@ -1268,7 +1268,7 @@ int av_sync_get_clock(void *sync, pts90K *pts)
 static void handle_mode_change_a(struct av_sync_session* avsync,
     bool v_active, bool a_active, bool v_timeout)
 {
-    log_info("[%d]amode %d mode %d v/a/vt %d/%d/%d", avsync->session_id,
+    log_info("[%d]av_sync amode %d mode %d v/a/vt %d/%d/%d", avsync->session_id,
             avsync->active_mode, avsync->mode, v_active, a_active, v_timeout);
     if (avsync->active_mode == AV_SYNC_MODE_AMASTER) {
         float speed;
@@ -1321,7 +1321,7 @@ static void handle_mode_change_v(struct av_sync_session* avsync,
 {
     struct session_debug debug;
 
-    log_info("[%d]amode mode %d %d v/a %d/%d", avsync->session_id,
+    log_info("[%d]av_sync amode mode %d %d v/a %d/%d", avsync->session_id,
             avsync->active_mode, avsync->mode, v_active, a_active);
     if (!msync_session_get_debug_mode(avsync->fd, &debug)) {
         if (debug.debug_freerun && !avsync->debug_freerun) {
