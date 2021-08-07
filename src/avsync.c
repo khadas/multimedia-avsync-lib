@@ -734,9 +734,9 @@ static bool frame_expire(struct av_sync_session* avsync,
     if (avsync->phase_set)
         systime += avsync->phase;
 
-    log_trace("[%d]systime:%u phase:%u correct:%u fpts:%u",
+    log_trace("[%d]systime:%u phase:%d correct:%u fpts:%u",
             avsync->session_id, systime,
-            avsync->phase_set?avsync->phase:0, pts_correction, fpts);
+            avsync->phase_set? (int)avsync->phase:0, pts_correction, fpts);
     if (abs_diff(systime, fpts) > avsync->disc_thres_min) {
         /* ignore discontinity under pause */
         if (avsync->paused)
@@ -852,23 +852,13 @@ static bool frame_expire(struct av_sync_session* avsync,
         avsync->vpts = fpts;
         /* phase adjustment */
         if (!avsync->phase_set) {
-            uint32_t phase_thres = interval / 4;
-            if ( systime > fpts && (systime - fpts) < phase_thres) {
-                /* too aligned to current VSYNC, separate them to 1/4 VSYNC */
-                avsync->phase = phase_thres - (systime - fpts);
+            //always adjust to the half v-sync to give most pts tolerace and unify behavior
+            if ((int)(systime - fpts) >= 0 && (int)(fpts + interval - systime) > 0) {
+                avsync->phase = interval/2 + fpts - systime;
                 avsync->phase_set = true;
-                log_info("[%d]adjust phase to %d", avsync->session_id, avsync->phase);
-            }
-            if (!avsync->phase_set && systime > fpts &&
-                systime < (fpts + interval) &&
-                (systime - fpts) > interval - phase_thres) {
-                /* too aligned to previous VSYNC, separate them to 1/4 VSYNC */
-                avsync->phase = phase_thres + fpts + interval - systime;
-                avsync->phase_set = true;
-                log_info("[%d]adjust phase to %d", avsync->session_id, avsync->phase);
+                log_info("[%d]adjust phase to %d", avsync->session_id, (int)avsync->phase);
             }
         }
-
         if (avsync->state != AV_SYNC_STAT_SYNC_SETUP)
             log_info("[%d]sync setup", avsync->session_id);
         avsync->state = AV_SYNC_STAT_SYNC_SETUP;
