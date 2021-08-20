@@ -105,7 +105,7 @@ struct  av_sync_session {
     /* log control */
     uint32_t last_log_syst;
     uint32_t sync_lost_cnt;
-    struct timeval sync_lost_print_time;
+    struct timespec sync_lost_print_time;
 
     pthread_t poll_thread;
     /* pcr master, IPTV only */
@@ -139,7 +139,7 @@ struct  av_sync_session {
 
     //Audio dropping detection
     uint32_t audio_drop_cnt;
-    struct timeval audio_drop_start;
+    struct timespec audio_drop_start;
 };
 
 #define MAX_FRAME_NUM 32
@@ -157,7 +157,7 @@ struct  av_sync_session {
 #define OUTLIER_MAX_CNT 8
 #define VALID_TS(x) ((x) != -1)
 
-static uint64_t time_diff (struct timeval *b, struct timeval *a);
+static uint64_t time_diff (struct timespec *b, struct timespec *a);
 static bool frame_expire(struct av_sync_session* avsync,
         uint32_t systime,
         uint32_t interval,
@@ -492,6 +492,7 @@ int av_sync_push_frame(void *sync , struct vframe *frame)
         avsync->frame_q = create_q(MAX_FRAME_NUM);
         if (!avsync->frame_q) {
             log_error("[%d]create queue fail", avsync->session_id);
+
             return -1;
         }
 
@@ -688,9 +689,9 @@ static inline uint32_t abs_diff(uint32_t a, uint32_t b)
     return (int)(a - b) > 0 ? a - b : b - a;
 }
 
-static uint64_t time_diff (struct timeval *b, struct timeval *a)
+static uint64_t time_diff (struct timespec *b, struct timespec *a)
 {
-    return (b->tv_sec - a->tv_sec)*1000000 + (b->tv_usec - a->tv_usec);
+    return (b->tv_sec - a->tv_sec)*1000000 + (b->tv_nsec/1000 - a->tv_nsec/1000);
 }
 
 static bool frame_expire(struct av_sync_session* avsync,
@@ -744,9 +745,9 @@ static bool frame_expire(struct av_sync_session* avsync,
 
         if ((VALID_TS(avsync->last_log_syst) && avsync->last_log_syst != systime) ||
                 (VALID_TS(avsync->last_pts) && avsync->last_pts != fpts)) {
-            struct timeval now;
+            struct timespec now;
 
-            gettimeofday(&now, NULL);
+            clock_gettime(CLOCK_MONOTONIC_RAW, &now);
             avsync->last_log_syst = systime;
             avsync->last_pts = fpts;
             if (time_diff(&now, &avsync->sync_lost_print_time) >=
@@ -754,7 +755,7 @@ static bool frame_expire(struct av_sync_session* avsync,
                 log_warn("[%d]sync lost systime:%u fpts:%u lost:%u",
                     avsync->session_id, systime, fpts, avsync->sync_lost_cnt);
                 avsync->sync_lost_cnt = 0;
-                gettimeofday(&avsync->sync_lost_print_time, NULL);
+                clock_gettime(CLOCK_MONOTONIC_RAW, &avsync->sync_lost_print_time);
             } else
                 avsync->sync_lost_cnt++;
         }
@@ -1224,10 +1225,10 @@ done:
             msync_session_set_audio_dis(avsync->fd, pts);
             avsync->last_disc_pts = pts;
         } else if (action == AV_SYNC_AA_DROP) {
-            struct timeval now;
+            struct timespec now;
 
             /* dropping recovery */
-            gettimeofday(&now, NULL);
+            clock_gettime(CLOCK_MONOTONIC_RAW, &now);
             if (!avsync->audio_drop_cnt)
                 avsync->audio_drop_start = now;
             avsync->audio_drop_cnt++;

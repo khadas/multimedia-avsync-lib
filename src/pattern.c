@@ -33,9 +33,6 @@ struct pattern_detector {
     int pattern_41[4];
     int pattern_41_index;
     int detected;
-
-    /* reset lock */
-    pthread_mutex_t lock;
 };
 
 void* create_pattern_detector()
@@ -47,7 +44,6 @@ void* create_pattern_detector()
         log_error("OOM");
         return NULL;
     }
-    pthread_mutex_init(&pd->lock, NULL);
     pd->detected = -1;
     return pd;
 }
@@ -57,7 +53,6 @@ void destroy_pattern_detector(void *handle)
     struct pattern_detector *pd = (struct pattern_detector *)handle;
 
     if (pd) {
-        pthread_mutex_destroy(&pd->lock);
         free(pd);
     }
 }
@@ -69,10 +64,8 @@ void reset_pattern(void *handle)
     if (!pd)
         return;
 
-    pthread_mutex_lock(&pd->lock);
     pd->detected = -1;
     memset(pd->match_cnt, 0, sizeof(pd->match_cnt));
-    pthread_mutex_unlock(&pd->lock);
 }
 
 void correct_pattern(void* handle, struct vframe *frame, struct vframe *nextframe,
@@ -91,7 +84,6 @@ void correct_pattern(void* handle, struct vframe *frame, struct vframe *nextfram
     if (nextframe)
         npts = nextframe->pts;
 
-    pthread_mutex_lock(&pd->lock);
     switch (pd->detected) {
         case AV_SYNC_FRAME_P32:
             pattern_range = PATTERN_32_D_RANGE;
@@ -188,7 +180,7 @@ void correct_pattern(void* handle, struct vframe *frame, struct vframe *nextfram
         }
     }
 exit:
-    pthread_mutex_unlock(&pd->lock);
+    return;
 }
 
 bool detect_pattern(void* handle, enum frame_pattern pattern, int cur_peroid, int last_peroid)
@@ -200,7 +192,6 @@ bool detect_pattern(void* handle, enum frame_pattern pattern, int cur_peroid, in
     if (!pd || pattern >= AV_SYNC_FRAME_PMAX)
         return ret;
 
-    pthread_mutex_lock(&pd->lock);
     if (pattern == AV_SYNC_FRAME_P32) {
         factor1 = 3;
         factor2 = 2;
@@ -279,6 +270,5 @@ bool detect_pattern(void* handle, enum frame_pattern pattern, int cur_peroid, in
         pd->match_cnt[pattern] = 0;
 
 exit:
-    pthread_mutex_unlock(&pd->lock);
     return ret;
 }
