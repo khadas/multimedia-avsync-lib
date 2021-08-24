@@ -17,7 +17,6 @@ struct queue {
     int max_len;
     int ri; //read index
     int wi; //write index
-    int total_num;
     void **items;
 };
 
@@ -45,7 +44,6 @@ void* create_q(int max_len)
 
     q->max_len = max_len;
     q->ri = q->wi = 0;
-    q->total_num = 0;
     return q;
 }
 
@@ -62,16 +60,20 @@ void destroy_q(void * queue)
 int queue_item(void *queue, void * item)
 {
     struct queue *q = queue;
+    int fullness;
 
-    if (!q || q->total_num == q->max_len)
+    if (!q)
         return -1;
+    fullness = q->wi - q->ri;
+    if (fullness < 0) fullness += q->max_len;
+    if (fullness >= q->max_len - 1)
+        return -1; // not enough space
+
     q->items[q->wi] = item;
     if (q->wi == q->max_len - 1)
         q->wi = 0;
     else
         q->wi++;
-    q->total_num++;
-
     return 0;
 }
 
@@ -79,10 +81,15 @@ int peek_item(void *queue, void** p_item, uint32_t cnt)
 {
     struct queue *q = queue;
     int32_t index;
+    int fullness;
 
-    if (!q || !q->total_num || q->total_num <= cnt)
+    if (!q)
         return -1;
 
+    fullness = q->wi - q->ri;
+    if (fullness < 0) fullness += q->max_len;
+    if (fullness == 0 || fullness <= cnt)
+       return -1; //no enough to peek
     index = q->ri;
     index += cnt;
     if (index >= q->max_len)
@@ -95,24 +102,30 @@ int peek_item(void *queue, void** p_item, uint32_t cnt)
 int dqueue_item(void *queue, void** p_item)
 {
     struct queue *q = queue;
+    int fullness;
 
-    if (!q || !q->total_num)
+    if (!q)
         return -1;
+    fullness = q->wi - q->ri;
+    if (fullness < 0) fullness += q->max_len;
+    if (fullness == 0)
+        return -1; //empty
     *p_item = q->items[q->ri];
     if (q->ri == q->max_len - 1)
         q->ri = 0;
     else
         q->ri++;
-    q->total_num--;
-
     return 0;
 }
 
 int queue_size(void *queue)
 {
     struct queue *q = queue;
+    int fullness;
 
     if (!q)
         return -1;
-    return q->total_num;
+    fullness = q->wi - q->ri;
+    if (fullness < 0) fullness += q->max_len;
+    return fullness;
 }

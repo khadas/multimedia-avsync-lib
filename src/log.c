@@ -35,7 +35,7 @@ static struct {
   FILE *fp;
   int level;
   int quiet;
-} L;
+} L = {0};
 
 
 static const char *level_names[] = {
@@ -101,22 +101,21 @@ void log_log(int level, const char *file, int line, const char *fmt, ...) {
   lock();
 
   /* Get current time */
-  time_t t = time(NULL);
-  struct tm *lt = localtime(&t);
-  struct timeval tv;
+   struct timespec tm;
+   long second, usec;
 
-  gettimeofday(&tv, NULL);
+   clock_gettime( CLOCK_MONOTONIC_RAW, &tm );
+   second = tm.tv_sec;
+   usec = tm.tv_nsec/1000LL;
   /* Log to stderr */
   if (!L.quiet) {
     va_list args;
-    char buf[16];
-    buf[strftime(buf, sizeof(buf), "%H:%M:%S", lt)] = '\0';
 #ifdef LOG_USE_COLOR
     fprintf(
-      stderr, "%s:%03ld %s%-5s\x1b[0m \x1b[90m%s:%d:\x1b[0m ",
-      buf, tv.tv_usec/1000, level_colors[level], level_names[level], file, line);
+      stderr, "[%ld.%06ld]: %s%-5s\x1b[0m \x1b[90m%s:%d:\x1b[0m ",
+     second, usec, level_colors[level], level_names[level], file, line);
 #else
-    fprintf(stderr, "%s:%03ld %-5s %s:%d: ", buf, tv.tv_usec/1000, level_names[level], file, line);
+    fprintf(stderr, "[%ld.%06ld]: %-5s %s:%d: ", second, usec, level_names[level], file, line);
 #endif
     va_start(args, fmt);
     vfprintf(stderr, fmt, args);
@@ -128,16 +127,13 @@ void log_log(int level, const char *file, int line, const char *fmt, ...) {
   /* Log to file */
   if (L.fp) {
     va_list args;
-    char buf[32];
-    buf[strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", lt)] = '\0';
-    fprintf(L.fp, "%s:%03ld %-5s %s:%d: ", buf, tv.tv_usec/1000, level_names[level], file, line);
+    fprintf(L.fp, "[%ld.%06ld]: %-5s %s:%d: ", second, usec, level_names[level], file, line);
     va_start(args, fmt);
     vfprintf(L.fp, fmt, args);
     va_end(args);
     fprintf(L.fp, "\n");
     fflush(L.fp);
   }
-
   /* Release lock */
   unlock();
 }
