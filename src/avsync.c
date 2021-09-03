@@ -126,6 +126,7 @@ struct  av_sync_session {
     //pcr monitor handle
     void *pcr_monitor;
     int ppm;
+    bool ppm_adjusted;
 
     //video FPS detection
     pts90K last_fpts;
@@ -1387,6 +1388,54 @@ exit:
     return NULL;
 }
 
+#define DEMOD_NODE "/sys/class/dtvdemod/atsc_para"
+/* return ppm between demod and PCR clock */
+int32_t static dmod_get_sfo_dev(struct av_sync_session *avsync)
+{
+    int fd = -1, ppm = 0, nread;
+    char buf[128];
+    uint32_t reg_v, lock;
+    float val;
+
+    fd = open(DEMOD_NODE, O_RDWR);
+    if (fd < 0) {
+        log_warn("node not found %s", DEMOD_NODE);
+        /* do not retry */
+        avsync->ppm_adjusted = true;
+        return 0;
+    }
+    snprintf(buf, sizeof(buf), "%d", 5);
+    write(fd, buf, 2);
+
+    lseek(fd, 0, SEEK_SET);
+
+    nread = read(fd, buf, sizeof(buf));
+    if (nread <= 0) {
+        log_error("read error");
+        goto err;
+    }
+    buf[nread] = 0;
+    if (sscanf(buf, "ck=0x%x lock=%d", &reg_v, &lock) != 2) {
+        log_error("wrong format %s", buf);
+        goto err;
+    }
+    if (lock != 0x1f) {
+        log_info("demod not locked");
+        goto err;
+    }
+    if (reg_v > ((2 << 20) - 1))
+        reg_v -= (2 << 21);
+    val = reg_v * 10.762238f / 12 * 1000000 / (2 << 25);
+    ppm = val;
+    log_info("ppm from SFO %d", ppm);
+    avsync->ppm_adjusted = true;
+
+err:
+    if (fd >= 0)
+      close(fd);
+    return ppm;
+}
+
 int av_sync_set_pcr_clock(void *sync, pts90K pts, uint64_t mono_clock)
 {
     struct av_sync_session *avsync = (struct av_sync_session *)sync;
@@ -1399,6 +1448,14 @@ int av_sync_set_pcr_clock(void *sync, pts90K pts, uint64_t mono_clock)
     if (avsync->type != AV_SYNC_TYPE_PCR)
         return -2;
 
+    /* initial estimation from Demod SFO HW */
+    if (!avsync->ppm_adjusted) {
+      ppm = dmod_get_sfo_dev(avsync);
+      if (ppm != 0) {
+          /* ppm > 0 means board clock is faster */
+          msync_session_set_clock_dev(avsync->fd, -ppm);
+      }
+    }
     pcr.monoclk = mono_clock / 1000;
     pcr.pts = (long long) pts * 1000 / 90;
     pcr_monitor_process(avsync->pcr_monitor, &pcr);
@@ -1412,6 +1469,8 @@ int av_sync_set_pcr_clock(void *sync, pts90K pts, uint64_t mono_clock)
             log_info("[%d]ppm:%d", avsync->session_id, ppm);
             if (msync_session_set_clock_dev(avsync->fd, ppm))
                 log_error("set clock dev fail");
+            else
+                avsync->ppm_adjusted = true;
         }
     }
 
@@ -1483,7 +1542,7 @@ int av_sync_get_audio_switch(void *sync,  bool *start)
     return 0;
 }
 
-enum  clock_recovery_stat av_sync_get_clock_devication(void *sync, int32_t *ppm)
+enum  clock_recovery_stat av_sync_get_clock_deviation(void *sync, int32_t *ppm)
 {
     struct av_sync_session *avsync = (struct av_sync_session *)sync;
 

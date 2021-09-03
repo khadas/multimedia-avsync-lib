@@ -390,7 +390,7 @@ int av_sync_set_audio_switch(void *sync,  bool start);
  */
 int av_sync_get_audio_switch(void *sync,  bool *status);
 
-/*  Get the current clock devication between PCR clock and system monotonic clock.
+/*  Get the current clock deviation between PCR clock and system monotonic clock.
  * Params:
  *   @sync: AV sync module handle
  *   @ppm: part per million. Bigger than 0 is PCR master clock is faster. Less than 0
@@ -402,5 +402,5 @@ int av_sync_get_audio_switch(void *sync,  bool *status);
  *                       be updated later for better accuracy.
  *   CLK_RECOVERY_ERR: error happens
  */
-enum  clock_recovery_stat av_sync_get_clock_devication(void *sync, int32_t *ppm);
+enum  clock_recovery_stat av_sync_get_clock_deviation(void *sync, int32_t *ppm);
 #endif
