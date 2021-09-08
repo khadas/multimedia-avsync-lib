@@ -476,7 +476,7 @@ int av_sync_pause(void *sync, bool pause)
 int av_sync_push_frame(void *sync , struct vframe *frame)
 {
     int ret;
-    struct vframe *prev;
+    struct vframe *prev = NULL;
     struct av_sync_session *avsync = (struct av_sync_session *)sync;
 
     if (!avsync)
@@ -513,8 +513,10 @@ int av_sync_push_frame(void *sync , struct vframe *frame)
         if (avsync->last_q_pts == frame->pts && avsync->mode == AV_SYNC_MODE_AMASTER) {
             /* TODO: wrong, should remove from back of queue */
             dqueue_item(avsync->frame_q, (void **)&prev);
-            prev->free(prev);
-            log_info ("[%d]drop frame with same pts %u", avsync->session_id, frame->pts);
+            if (prev) {
+                prev->free(prev);
+                log_info ("[%d]drop frame with same pts %u", avsync->session_id, frame->pts);
+            }
         } else if (avsync->fps_cnt < 100) {
             int32_t interval = frame->pts - avsync->last_q_pts;
 
