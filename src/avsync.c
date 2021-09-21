@@ -141,6 +141,9 @@ struct  av_sync_session {
     //Audio dropping detection
     uint32_t audio_drop_cnt;
     struct timespec audio_drop_start;
+
+    /*system mono time for current vsync interrupt */
+    uint64_t msys;
 };
 
 #define MAX_FRAME_NUM 32
@@ -171,6 +174,8 @@ static bool pattern_detect(struct av_sync_session* avsync,
 static void * poll_thread(void * arg);
 static void trigger_audio_start_cb(struct av_sync_session *avsync,
         avs_ascb_reason reason);
+static struct vframe * video_mono_pop_frame(struct av_sync_session *avsync);
+static int video_mono_push_frame(struct av_sync_session *avsync, struct vframe *frame);
 
 int av_sync_open_session(int *session_id)
 {
@@ -204,10 +209,25 @@ static void* create_internal(int session_id,
     struct av_sync_session *avsync = NULL;
     char dev_name[20];
 
+    log_info("[%d] mode %d type %d", session_id, mode, type);
     avsync = (struct av_sync_session *)calloc(1, sizeof(*avsync));
     if (!avsync) {
         log_error("OOM");
         return NULL;
+    }
+
+    if (type == AV_SYNC_TYPE_VIDEO &&
+            mode == AV_SYNC_MODE_VIDEO_MONO) {
+      if (session_id < AV_SYNC_SESSION_V_MONO) {
+          log_error("wrong session id %d", session_id);
+          goto err;
+      }
+      avsync->type = type;
+      avsync->mode = mode;
+      avsync->fd = -1;
+      avsync->session_id = session_id;
+      log_info("[%d]init", avsync->session_id);
+      return avsync;
     }
 
     if (type == AV_SYNC_TYPE_VIDEO) {
@@ -257,9 +277,8 @@ static void* create_internal(int session_id,
     }
 
     pthread_mutex_init(&avsync->lock, NULL);
-    log_info("[%d] mode %d type %d start_thres %d disc_thres %u/%u",
-        session_id, mode, type, start_thres,
-        avsync->disc_thres_min, avsync->disc_thres_max);
+    log_info("[%d] start_thres %d disc_thres %u/%u",
+        start_thres, avsync->disc_thres_min, avsync->disc_thres_max);
 
     snprintf(dev_name, sizeof(dev_name), "/dev/%s%d", SESSION_DEV, session_id);
     avsync->fd = open(dev_name, O_RDONLY | O_CLOEXEC);
@@ -335,6 +354,8 @@ void* av_sync_create(int session_id,
 
 void* av_sync_attach(int session_id, enum sync_type type)
 {
+    if (type == AV_SYNC_TYPE_VIDEO)
+        return NULL;
     return create_internal(session_id, AV_SYNC_MODE_MAX,
             type, 0, true);
 }
@@ -380,6 +401,14 @@ void av_sync_destroy(void *sync)
     if (!avsync)
         return;
 
+    if (avsync->type == AV_SYNC_TYPE_VIDEO &&
+            avsync->mode == AV_SYNC_MODE_VIDEO_MONO) {
+        log_info("[%d]done", avsync->session_id);
+        internal_stop(avsync);
+        destroy_q(avsync->frame_q);
+        free(avsync);
+        return;
+    }
     log_info("[%d]begin", avsync->session_id);
     if (avsync->state != AV_SYNC_STAT_INIT) {
         if (avsync->type == AV_SYNC_TYPE_VIDEO)
@@ -491,6 +520,10 @@ int av_sync_push_frame(void *sync , struct vframe *frame)
     if (!avsync)
         return -1;
 
+    if (avsync->type == AV_SYNC_TYPE_VIDEO &&
+            avsync->mode == AV_SYNC_MODE_VIDEO_MONO)
+        return video_mono_push_frame(avsync, frame);
+
     if (!avsync->frame_q) {
         /* policy should be final now */
         if (msync_session_get_start_policy(avsync->fd, &avsync->start_policy, &avsync->timeout)) {
@@ -559,7 +592,6 @@ int av_sync_push_frame(void *sync , struct vframe *frame)
         log_error("%s queue fail:%d", ret);
     log_debug("[%d]push %u, QNum=%d", avsync->session_id, frame->pts, queue_size(avsync->frame_q));
     return ret;
-
 }
 
 struct vframe *av_sync_pop_frame(void *sync)
@@ -570,6 +602,10 @@ struct vframe *av_sync_pop_frame(void *sync)
     uint32_t systime;
     bool pause_pts_reached = false;
     uint32_t interval;
+
+    if (avsync->type == AV_SYNC_TYPE_VIDEO &&
+            avsync->mode == AV_SYNC_MODE_VIDEO_MONO)
+        return video_mono_pop_frame(avsync);
 
     pthread_mutex_lock(&avsync->lock);
     if (avsync->state == AV_SYNC_STAT_INIT) {
@@ -1573,4 +1609,84 @@ enum  clock_recovery_stat av_sync_get_clock_deviation(void *sync, int32_t *ppm)
         return CLK_RECOVERY_ONGOING;
     else
         return CLK_RECOVERY_READY;
+}
+
+static int video_mono_push_frame(struct av_sync_session *avsync, struct vframe *frame)
+{
+    int ret;
+
+    if (!avsync->frame_q) {
+        avsync->frame_q = create_q(MAX_FRAME_NUM);
+        if (!avsync->frame_q) {
+            log_error("[%d]create queue fail", avsync->session_id);
+
+            return -1;
+        }
+    }
+
+    ret = queue_item(avsync->frame_q, frame);
+    if (ret)
+        log_error("%s queue fail:%d", ret);
+    log_debug("[%d]push %llu, QNum=%d", avsync->session_id, frame->mts, queue_size(avsync->frame_q));
+    return ret;
+}
+
+int av_sync_set_vsync_mono_time(void *sync , uint64_t msys)
+{
+    struct av_sync_session *avsync = (struct av_sync_session *)sync;
+
+    if (!avsync)
+        return -1;
+    avsync->msys = msys;
+    return 0;
+}
+
+static struct vframe * video_mono_pop_frame(struct av_sync_session *avsync)
+{
+    struct vframe *frame = NULL, *enter_last_frame = NULL;
+    uint64_t systime;
+    int toggle_cnt = 0;
+
+    enter_last_frame = avsync->last_frame;
+    systime = avsync->msys;
+    log_debug("[%d]sys %llu", avsync->session_id, systime);
+    while (!peek_item(avsync->frame_q, (void **)&frame, 0)) {
+        if (systime >= frame->mts) {
+            log_debug("[%d]cur_f %llu expire", avsync->session_id, frame->mts);
+            toggle_cnt++;
+
+            if (avsync->last_frame)
+                avsync->last_holding_peroid = avsync->last_frame->hold_period;
+
+            dqueue_item(avsync->frame_q, (void **)&frame);
+            if (avsync->last_frame) {
+                /* free frame that are not for display */
+                if (toggle_cnt > 1) {
+                    log_debug("[%d]free %llu cur %llu system %llu", avsync->session_id,
+                             avsync->last_frame->mts, frame->mts, systime);
+                    avsync->last_frame->free(avsync->last_frame);
+                }
+            } else {
+                avsync->first_frame_toggled = true;
+                log_info("[%d]first frame %llu", avsync->session_id, frame->mts);
+            }
+            avsync->last_frame = frame;
+        } else
+            break;
+    }
+
+    if (avsync->last_frame) {
+        if (enter_last_frame != avsync->last_frame)
+            log_debug("[%d]pop %llu", avsync->session_id, avsync->last_frame->pts);
+        log_trace("[%d]pop=%llu, system=%llu, diff %d(ms), QNum=%d", avsync->session_id,
+                avsync->last_frame->mts,
+                systime, (systime - avsync->last_frame->mts) / 1000000,
+                queue_size(avsync->frame_q));
+    } else
+        if (enter_last_frame != avsync->last_frame)
+            log_debug("[%d]pop (nil)", avsync->session_id);
+
+    if (avsync->last_frame)
+        avsync->last_frame->hold_period++;
+    return avsync->last_frame;
 }

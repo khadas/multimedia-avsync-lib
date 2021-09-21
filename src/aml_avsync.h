@@ -22,6 +22,7 @@ enum sync_mode {
     AV_SYNC_MODE_PCR_MASTER = 2,
     AV_SYNC_MODE_IPTV = 3,
     AV_SYNC_MODE_FREE_RUN = 4,
+    AV_SYNC_MODE_VIDEO_MONO = 5, /* video render by system mono time */
     AV_SYNC_MODE_MAX
 };
 
@@ -52,6 +53,7 @@ enum clock_recovery_stat {
 
 #define AV_SYNC_INVALID_PAUSE_PTS 0xFFFFFFFF
 #define AV_SYNC_STEP_PAUSE_PTS 0xFFFFFFFE
+#define AV_SYNC_SESSION_V_MONO 64
 
 typedef uint32_t pts90K;
 struct vframe;
@@ -98,6 +100,8 @@ struct vframe {
     /* private user data */
     void *private;
     pts90K pts;
+    /* mono render time in nanosecdons only use in VIDEO_MONO */
+    uint64_t mts;
     /* duration of this frame.  0 for invalid value */
     pts90K duration;
     /* free function, will be called when multi frames are
@@ -153,6 +157,8 @@ void av_sync_close_session(int session);
  * Params:
  *   @session_id: unique AV sync session ID to bind audio and video
  *               usually get from kernel driver.
+ *               If ID AV_SYNC_SESSION_V_MONO or bigger is assigned, only
+ *               AV_SYNC_MODE_VIDEO_MONO is accepted.
  *   @mode: AV sync mode of enum sync_mode
  *   @type: AV sync type of enum sync_type. For a stream with both
  *          video and audio, two instances with each type should be created.
@@ -220,6 +226,17 @@ int av_sync_pause(void *sync, bool pause);
  *   0 for OK, or error code
  */
 int av_sync_push_frame(void *sync , struct vframe *frame);
+
+/* notify current system mono time for current VSYNC.
+ * This API should be VSYNC triggerd. Used only in VIDEO_MONO mode.
+ * Params:
+ *   @sync: AV sync module handle
+ *   @msys: system mono time of current VSYNC interrupt in nanosecond
+ *          Usually returned by drmWaitVBlank.
+ * Return:
+ *   0 for OK, or error code
+ * */
+int av_sync_set_vsync_mono_time(void *sync , uint64_t msys);
 
 /* Pop video frame for next VSYNC. This API should be VSYNC triggerd.
  * Params:
