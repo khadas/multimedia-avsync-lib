@@ -714,14 +714,17 @@ static bool frame_expire(struct av_sync_session* avsync,
     if (avsync->pause_pts == AV_SYNC_STEP_PAUSE_PTS)
         return true;
 
-    if (avsync->mode == AV_SYNC_MODE_FREE_RUN) {
-        /* render according to FPS */
-        if (!VALID_TS(avsync->last_r_syst) ||
-                (int)(systime - avsync->last_r_syst) >= avsync->fps_interval) {
-            avsync->last_r_syst = systime;
+    if (avsync->mode == AV_SYNC_MODE_FREE_RUN ||
+       avsync->mode == AV_SYNC_MODE_VMASTER) {
+        /* We need to ensure that the video outputs smoothly,
+        so output video frame by frame hold_period */
+        if ((abs_diff(systime, fpts) > AV_PATTERN_RESET_THRES) &&
+               avsync->last_frame &&
+               (avsync->last_frame->hold_period >= (avsync->fps_interval/interval))) {
+            log_debug("[%d]vmaster/freerun  systime:%u --> fpts:%u,last hold_period:%d",
+                avsync->session_id, systime, fpts,avsync->last_frame->hold_period);
             return true;
         }
-        return false;
     }
 
     if (!fpts) {
