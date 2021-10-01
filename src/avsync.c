@@ -303,6 +303,14 @@ static void* create_internal(int session_id,
             session_id, avsync->mode, avsync->start_policy);
     }
 
+    /* debug log level */
+    {
+      const char *env= getenv( "AML_AVSYNC_DEBUG_LEVEL");
+      if ( env ) {
+        log_set_level(atoi(env));
+      }
+    }
+
     return avsync;
 err4:
     if (avsync->pcr_monitor)
@@ -620,8 +628,12 @@ struct vframe *av_sync_pop_frame(void *sync)
 
             if (pattern_detect(avsync,
                     (avsync->last_frame?avsync->last_frame->hold_period:0),
-                    avsync->last_holding_peroid))
+                    avsync->last_holding_peroid)) {
                 log_info("[%d] %u break the pattern", avsync->session_id, avsync->last_frame->pts);
+                log_info("[%d] cur frame %u sys %u", avsync->session_id, frame->pts, systime);
+                if (next_frame)
+                    log_info("[%d] next frame %u", avsync->session_id, next_frame->pts);
+            }
 
             if (avsync->last_frame)
                 avsync->last_holding_peroid = avsync->last_frame->hold_period;

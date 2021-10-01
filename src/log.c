@@ -79,11 +79,7 @@ void log_set_fp(FILE *fp) {
 
 
 void log_set_level(int level) {
-  const char *env= getenv( "AML_AVSYNC_DEBUG_LEVEL" );
-  if ( env ) {
-    L.level = atoi( env );
-  } else
-    L.level = level;
+  L.level = level;
 }
 
 
