@@ -29,6 +29,7 @@
 #include "msync.h"
 #include <pthread.h>
 #include "pcr_monitor.h"
+
 enum sync_state {
     AV_SYNC_STAT_INIT = 0,
     AV_SYNC_STAT_RUNNING = 1,
@@ -176,28 +177,38 @@ static void trigger_audio_start_cb(struct av_sync_session *avsync,
         avs_ascb_reason reason);
 static struct vframe * video_mono_pop_frame(struct av_sync_session *avsync);
 static int video_mono_push_frame(struct av_sync_session *avsync, struct vframe *frame);
+pthread_mutex_t glock = PTHREAD_MUTEX_INITIALIZER;
 
 int av_sync_open_session(int *session_id)
 {
-    int fd = msync_create_session();
+    int fd = -1;
     int id, rc;
 
+    pthread_mutex_lock(&glock);
+    fd = msync_create_session();
     if (fd < 0) {
         log_error("fail");
-        return -1;
+        goto exit;
     }
     rc = ioctl(fd, AMSYNC_IOC_ALLOC_SESSION, &id);
     if (rc) {
         log_error("new session errno:%d", errno);
-        return rc;
+        msync_destory_session(fd);
+        goto exit;
     }
     *session_id = id;
+    log_debug("new avsession id %d fd %d", id, fd);
+exit:
+    pthread_mutex_unlock(&glock);
     return fd;
 }
 
 void av_sync_close_session(int session)
 {
+    log_debug("session closed fd %d", session);
+    pthread_mutex_lock(&glock);
     msync_destory_session(session);
+    pthread_mutex_unlock(&glock);
 }
 
 static void* create_internal(int session_id,
@@ -208,6 +219,7 @@ static void* create_internal(int session_id,
 {
     struct av_sync_session *avsync = NULL;
     char dev_name[20];
+    int retry = 10;
 
     log_info("[%d] mode %d type %d", session_id, mode, type);
     avsync = (struct av_sync_session *)calloc(1, sizeof(*avsync));
@@ -281,10 +293,18 @@ static void* create_internal(int session_id,
         start_thres, avsync->disc_thres_min, avsync->disc_thres_max);
 
     snprintf(dev_name, sizeof(dev_name), "/dev/%s%d", SESSION_DEV, session_id);
-    avsync->fd = open(dev_name, O_RDONLY | O_CLOEXEC);
-    if (avsync->fd < 0) {
-        log_error("open %s errno %d", dev_name, errno);
-        goto err2;
+    while (retry) {
+        /* wait for sysfs to update */
+        avsync->fd = open(dev_name, O_RDONLY | O_CLOEXEC);
+        if (avsync->fd > 0)
+            break;
+
+        retry--;
+        if (!retry) {
+          log_error("open %s errno %d", dev_name, errno);
+          goto err2;
+        }
+        usleep(20000);
     }
 
     if (avsync->type == AV_SYNC_TYPE_PCR) {
@@ -609,7 +629,7 @@ struct vframe *av_sync_pop_frame(void *sync)
 
     pthread_mutex_lock(&avsync->lock);
     if (avsync->state == AV_SYNC_STAT_INIT) {
-        log_info("[%d]in state INIT", avsync->session_id);
+        log_debug("[%d]in state INIT", avsync->session_id);
         goto exit;
     }
 
