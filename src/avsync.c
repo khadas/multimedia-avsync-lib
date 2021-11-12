@@ -429,7 +429,7 @@ void av_sync_destroy(void *sync)
         free(avsync);
         return;
     }
-    log_info("[%d]begin", avsync->session_id);
+    log_info("[%d]begin type %d", avsync->session_id, avsync->type);
     if (avsync->state != AV_SYNC_STAT_INIT) {
         if (avsync->type == AV_SYNC_TYPE_VIDEO)
             internal_stop(avsync);
@@ -459,7 +459,7 @@ void av_sync_destroy(void *sync)
         destroy_q(avsync->frame_q);
         destroy_pattern_detector(avsync->pattern_detector);
     }
-    log_info("[%d]done", avsync->session_id);
+    log_info("[%d]done type %d", avsync->session_id, avsync->type);
     free(avsync);
 }
 
@@ -487,11 +487,15 @@ int av_sync_pause(void *sync, bool pause)
     bool v_active, a_active, v_timeout;
     int rc;
 
-    if (!avsync)
+    if (!avsync) {
+        log_error("invalid handle");
         return -1;
+    }
 
-    if (avsync->mode == AV_SYNC_MODE_PCR_MASTER)
+    if (avsync->mode == AV_SYNC_MODE_PCR_MASTER) {
+        log_warn("ignore pause in pcr master mode");
         return -1;
+    }
 
      rc = msync_session_get_stat(avsync->fd, &avsync->active_mode,
                 &v_active, &a_active, &v_timeout,
@@ -732,7 +736,7 @@ struct vframe *av_sync_pop_frame(void *sync)
         avsync->paused = true;
         avsync->pause_pts = AV_SYNC_INVALID_PAUSE_PTS;
         log_info ("[%d]reach pause pts: %u",
-            avsync->session_id, avsync->last_frame->pts);
+            avsync->session_id, avsync->pause_pts);
     }
 
 exit:
