@@ -786,6 +786,10 @@ static bool frame_expire(struct av_sync_session* avsync,
     if (avsync->pause_pts == AV_SYNC_STEP_PAUSE_PTS)
         return true;
 
+    if (systime == AV_SYNC_INVALID_PTS &&
+            avsync->mode == AV_SYNC_MODE_AMASTER)
+        return false;
+
     if (avsync->mode == AV_SYNC_MODE_FREE_RUN ||
        avsync->mode == AV_SYNC_MODE_VMASTER) {
         /* We need to ensure that the video outputs smoothly,
