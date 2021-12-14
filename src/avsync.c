@@ -734,9 +734,9 @@ struct vframe *av_sync_pop_frame(void *sync)
 
         /* stay in paused until av_sync_pause(false) */
         avsync->paused = true;
-        avsync->pause_pts = AV_SYNC_INVALID_PAUSE_PTS;
         log_info ("[%d]reach pause pts: %u",
             avsync->session_id, avsync->pause_pts);
+        avsync->pause_pts = AV_SYNC_INVALID_PAUSE_PTS;
     }
 
 exit:
@@ -784,6 +784,10 @@ static bool frame_expire(struct av_sync_session* avsync,
         return false;
 
     if (avsync->pause_pts == AV_SYNC_STEP_PAUSE_PTS)
+        return true;
+
+    if (avsync->pause_pts != AV_SYNC_INVALID_PAUSE_PTS &&
+        avsync->pause_pts == frame->pts)
         return true;
 
     if (systime == AV_SYNC_INVALID_PTS &&
