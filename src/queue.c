@@ -11,7 +11,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include "aml_avsync.h"
-#include "queue.h"
+#include "aml_queue.h"
 
 struct queue {
     int max_len;

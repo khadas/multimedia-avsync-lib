@@ -22,7 +22,7 @@
 #include <unistd.h>
 //#include <linux/amlogic/msync.h>
 #include "aml_avsync.h"
-#include "queue.h"
+#include "aml_queue.h"
 #include "pattern.h"
 #include "aml_avsync_log.h"
 #include "msync_util.h"

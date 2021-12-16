@@ -35,6 +35,7 @@ clean:
 install:
 	cp aml_avsync_log.h $(STAGING_DIR)/usr/include/
 	cp aml_avsync.h $(STAGING_DIR)/usr/include/
+	cp aml_queue.h $(STAGING_DIR)/usr/include/
 	cp $(TARGET) $(TARGET_DIR)/usr/lib/
 ifeq ($(BUILD_TEST), yes)
 	cp $(TEST) $(TARGET_DIR)/usr/bin/
