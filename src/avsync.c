@@ -613,7 +613,7 @@ int av_sync_push_frame(void *sync , struct vframe *frame)
     }
 
     if (ret)
-        log_error("%s queue fail:%d", ret);
+        log_error("queue fail:%d", ret);
     log_debug("[%d]push %u, QNum=%d", avsync->session_id, frame->pts, queue_size(avsync->frame_q));
     return ret;
 }
