@@ -26,4 +26,5 @@ void reset_pattern(void *handle);
 bool detect_pattern(void* handle, enum frame_pattern pattern, int cur_peroid, int last_peroid);
 void correct_pattern(void* handle, struct vframe *frame, struct vframe *nextframe,
         int cur_peroid, int last_peroid, pts90K systime, pts90K vsync_interval, bool *expire);
+int get_pattern(void* handle);
 #endif
