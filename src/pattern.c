@@ -263,6 +263,7 @@ bool detect_pattern(void* handle, enum frame_pattern pattern, int cur_peroid, in
     } else if (pd->match_cnt[pattern] == range) {
         pd->match_cnt[pattern] = 0;
         pd->exit_cnt[pattern]++;
+        pd->detected = -1;
         log_info("video %d:%d mode broken by %d:%d cnt %d", factor1, factor2,
                  last_peroid, cur_peroid, pd->exit_cnt[pattern]);
         ret = true;
@@ -271,4 +272,10 @@ bool detect_pattern(void* handle, enum frame_pattern pattern, int cur_peroid, in
 
 exit:
     return ret;
+}
+
+int get_pattern(void* handle)
+{
+    struct pattern_detector *pd = (struct pattern_detector *)handle;
+    return pd->detected;
 }

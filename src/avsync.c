@@ -289,7 +289,7 @@ static void* create_internal(int session_id,
     }
 
     pthread_mutex_init(&avsync->lock, NULL);
-    log_info("[%d] start_thres %d disc_thres %u/%u",
+    log_info("[%d] start_thres %d disc_thres %u/%u", session_id,
         start_thres, avsync->disc_thres_min, avsync->disc_thres_max);
 
     snprintf(dev_name, sizeof(dev_name), "/dev/%s%d", SESSION_DEV, session_id);
@@ -940,10 +940,22 @@ static bool frame_expire(struct av_sync_session* avsync,
         /* phase adjustment */
         if (!avsync->phase_set) {
             //always adjust to the half v-sync to give most pts tolerace and unify behavior
-            if ((int)(systime - fpts) >= 0 && (int)(fpts + interval - systime) > 0) {
-                avsync->phase = interval/2 + fpts - systime;
+            if ((int)(systime - fpts) >= 0 &&
+                    (int)(fpts + interval - systime) > 0) {
+                avsync->phase = interval / 2 + fpts - systime;
                 avsync->phase_set = true;
                 log_info("[%d]adjust phase to %d", avsync->session_id, (int)avsync->phase);
+            }
+        } else if (get_pattern(avsync->pattern_detector) < 0) {
+            if ((int)(systime - fpts) >= 0 &&
+                    (int)(fpts + interval - systime) > 0) {
+                int vsync_pts_delta = (int)(systime - fpts);
+
+                if (vsync_pts_delta < 10 || vsync_pts_delta > (interval - 10)) {
+                    avsync->phase += interval / 8;
+                    log_info("[%d] too aligned adjust phase to %d",
+                            avsync->session_id, (int)avsync->phase);
+                }
             }
         }
         if (avsync->state != AV_SYNC_STAT_SYNC_SETUP)
