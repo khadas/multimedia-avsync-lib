@@ -66,6 +66,7 @@ struct  av_sync_session {
     /* phase adjustment of stream time for rate control (Video ONLY) */
     pts90K phase;
     bool phase_set;
+    bool phase_adjusted;
 
     /* pts of last rendered frame */
     pts90K last_wall;
@@ -259,6 +260,7 @@ static void* create_internal(int session_id,
             avsync->start_thres = start_thres;
         }
         avsync->phase_set = false;
+        avsync->phase_adjusted = false;
         avsync->first_frame_toggled = false;
     }
 
@@ -671,6 +673,7 @@ struct vframe *av_sync_pop_frame(void *sync)
             avsync->fps_interval = interval;
         avsync->vsync_interval = interval;
         avsync->phase_set = false;
+        avsync->phase_adjusted = false;
         avsync->phase = 0;
         reset_pattern(avsync->pattern_detector);
     }
@@ -862,6 +865,7 @@ static bool frame_expire(struct av_sync_session* avsync,
         avsync->outlier_cnt = 0;
         avsync->state = AV_SYNC_STAT_SYNC_LOST;
         avsync->phase_set = false;
+        avsync->phase_adjusted = false;
         avsync->phase = 0;
         reset_pattern(avsync->pattern_detector);
 
@@ -946,13 +950,14 @@ static bool frame_expire(struct av_sync_session* avsync,
                 avsync->phase_set = true;
                 log_info("[%d]adjust phase to %d", avsync->session_id, (int)avsync->phase);
             }
-        } else if (get_pattern(avsync->pattern_detector) < 0) {
+        } else if (get_pattern(avsync->pattern_detector) < 0 && !avsync->phase_adjusted) {
             if ((int)(systime - fpts) >= 0 &&
                     (int)(fpts + interval - systime) > 0) {
                 int vsync_pts_delta = (int)(systime - fpts);
 
                 if (vsync_pts_delta < 10 || vsync_pts_delta > (interval - 10)) {
                     avsync->phase += interval / 8;
+                    avsync->phase_adjusted = true;
                     log_info("[%d] too aligned adjust phase to %d",
                             avsync->session_id, (int)avsync->phase);
                 }
