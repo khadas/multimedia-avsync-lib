@@ -89,6 +89,7 @@ struct  av_sync_session {
 
     /* render property */
     int delay;
+    int extra_delay;
     pts90K vsync_interval;
 
     /* state  lock */
@@ -395,9 +396,10 @@ int av_sync_video_config(void *sync, struct video_config* config)
     }
 
     avsync->delay = config->delay;
+    avsync->extra_delay = config->extra_delay * 90;
 
-    log_info("[%d] delay: %d",
-            avsync->session_id, config->delay);
+    log_info("[%d] vsync delay: %d extra_delay: %d ms",
+            avsync->session_id, config->delay, config->extra_delay);
     return 0;
 }
 
@@ -779,7 +781,8 @@ static bool frame_expire(struct av_sync_session* avsync,
         struct vframe * next_frame,
         int toggle_cnt)
 {
-    uint32_t fpts = frame->pts;
+    uint32_t fpts = frame->pts + avsync->extra_delay;
+    uint32_t nfpts = -1;
     bool expire = false;
     uint32_t pts_correction = avsync->delay * interval;
 
@@ -796,6 +799,9 @@ static bool frame_expire(struct av_sync_session* avsync,
     if (systime == AV_SYNC_INVALID_PTS &&
             avsync->mode == AV_SYNC_MODE_AMASTER)
         return false;
+
+    if (next_frame)
+        nfpts = next_frame->pts + avsync->extra_delay;
 
     if (avsync->mode == AV_SYNC_MODE_FREE_RUN ||
        avsync->mode == AV_SYNC_MODE_VMASTER) {
@@ -916,25 +922,25 @@ static bool frame_expire(struct av_sync_session* avsync,
     expire = (int)(systime - fpts) >= 0;
 
     /* scatter the frame in different vsync whenever possible */
-    if (expire && next_frame && next_frame->pts && toggle_cnt) {
+    if (expire && nfpts != -1 && nfpts && toggle_cnt) {
         /* multi frame expired in current vsync but no frame in next vsync */
-        if (systime + interval < next_frame->pts) {
+        if (systime + interval < nfpts) {
             expire = false;
             log_debug("[%d]unset expire systime:%d inter:%d next_pts:%d toggle_cnt:%d",
-                    avsync->session_id, systime, interval, next_frame->pts, toggle_cnt);
+                    avsync->session_id, systime, interval, nfpts, toggle_cnt);
         }
-    } else if (!expire && next_frame && next_frame->pts && !toggle_cnt
+    } else if (!expire && nfpts != -1 && nfpts && !toggle_cnt
                && avsync->first_frame_toggled) {
         /* next vsync will have at least 2 frame expired */
-        if (systime + interval >= next_frame->pts) {
+        if (systime + interval >= nfpts) {
             expire = true;
             log_debug("[%d]set expire systime:%d inter:%d next_pts:%d",
-                    avsync->session_id, systime, interval, next_frame->pts);
+                    avsync->session_id, systime, interval, nfpts);
         }
     }
 
     if (avsync->state == AV_SYNC_STAT_SYNC_SETUP)
-        correct_pattern(avsync->pattern_detector, frame, next_frame,
+        correct_pattern(avsync->pattern_detector, fpts, nfpts,
                 (avsync->last_frame?avsync->last_frame->hold_period:0),
                 avsync->last_holding_peroid, systime,
                 interval, &expire);

@@ -126,6 +126,8 @@ struct video_config {
      * 1 for osd planes
      */
     int delay;
+    /* delayed video for slow audio path, in ms */
+    int extra_delay;
 };
 
 struct start_policy {

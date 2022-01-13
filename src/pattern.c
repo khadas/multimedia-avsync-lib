@@ -68,21 +68,17 @@ void reset_pattern(void *handle)
     memset(pd->match_cnt, 0, sizeof(pd->match_cnt));
 }
 
-void correct_pattern(void* handle, struct vframe *frame, struct vframe *nextframe,
+void correct_pattern(void* handle, pts90K fpts, pts90K npts,
         int cur_peroid, int last_peroid,
         pts90K systime, pts90K vsync_interval, bool *expire)
 {
     struct pattern_detector *pd = (struct pattern_detector *)handle;
     int pattern_range, expected_cur_peroid, remain_period;
     int expected_prev_interval;
-    int npts = 0;
 
     /* Dont do anything if we have invalid data */
-    if (!pd || !frame || !frame->pts)
+    if (!pd || fpts == -1 || !fpts)
         return;
-
-    if (nextframe)
-        npts = nextframe->pts;
 
     switch (pd->detected) {
         case AV_SYNC_FRAME_P32:
@@ -100,7 +96,7 @@ void correct_pattern(void* handle, struct vframe *frame, struct vframe *nextfram
                     goto exit;
             }
             if (!npts)
-                npts = frame->pts + PATTERN_32_DURATION;
+                npts = fpts + PATTERN_32_DURATION;
             break;
         case AV_SYNC_FRAME_P22:
             if (last_peroid != 2)
@@ -109,7 +105,7 @@ void correct_pattern(void* handle, struct vframe *frame, struct vframe *nextfram
             expected_prev_interval = 2;
             expected_cur_peroid = 2;
             if (!npts)
-                npts = frame->pts + PATTERN_22_DURATION;
+                npts = fpts + PATTERN_22_DURATION;
             break;
         case AV_SYNC_FRAME_P41:
             /* TODO */
@@ -120,7 +116,7 @@ void correct_pattern(void* handle, struct vframe *frame, struct vframe *nextfram
             expected_prev_interval = 1;
             expected_cur_peroid = 1;
             if (!npts)
-                npts = frame->pts + PATTERN_11_DURATION;
+                npts = fpts + PATTERN_11_DURATION;
             break;
         default:
             goto exit;
@@ -138,10 +134,10 @@ void correct_pattern(void* handle, struct vframe *frame, struct vframe *nextfram
             /* 22222...22222 -> 222..2213(2)22...22 */
             /* check if next frame will toggle after 3 vsyncs */
             /* shall only allow one extra interval space to play around */
-            if (systime - frame->pts <= 90) {
+            if (systime - fpts <= 90) {
                 *expire = false;
                 log_debug("hold frame for pattern: %d sys: %u fpts: %u",
-                        pd->detected, systime, frame->pts);
+                        pd->detected, systime, fpts);
             } else if (((int)(systime + (remain_period + 1) *
                         vsync_interval - npts) <= 0) &&
                 ((int)(systime + (remain_period + 2) *
@@ -150,12 +146,12 @@ void correct_pattern(void* handle, struct vframe *frame, struct vframe *nextfram
                 log_debug("hold frame for pattern: %d", pd->detected);
             } else {
                 log_debug("not hold frame for pattern: %d sys: %u fpts: %u s-f %u nfps: %u",
-                    pd->detected, systime, frame->pts, systime - frame->pts, npts);
+                    pd->detected, systime, fpts, systime - fpts, npts);
             }
 
 #if 0 // Frame scattering is the right place to adjust the hold time.
             /* here need to escape a vsync */
-            if (systime > (frame->pts + vsync_interval)) {
+            if (systime > (fpts + vsync_interval)) {
                 *expire = true;
                 pts_escape_vsync = 1;
                 log_info("escape a vsync pattern: %d", pd->detected);
@@ -171,7 +167,7 @@ void correct_pattern(void* handle, struct vframe *frame, struct vframe *nextfram
             /* check if this frame will expire next vsyncs and */
             /* next frame will expire after 2 vsyncs */
 
-            if (((int)(systime + vsync_interval - frame->pts) >= 0) &&
+            if (((int)(systime + vsync_interval - fpts) >= 0) &&
                     ((int)(systime + vsync_interval * (expected_prev_interval - 1) - npts) < 0) &&
                     ((int)(systime + expected_prev_interval * vsync_interval - npts) >= 0)) {
                 *expire = true;
