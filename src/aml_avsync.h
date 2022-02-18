@@ -60,6 +60,7 @@ typedef uint32_t pts90K;
 struct vframe;
 typedef void (*free_frame)(struct vframe * frame);
 typedef void (*pause_pts_done)(uint32_t pts, void* priv);
+typedef void (*underflow_detected)(uint32_t pts, void* priv);
 
 typedef enum {
     /* good to render */
@@ -134,6 +135,9 @@ struct start_policy {
     enum sync_start_policy policy;
     /*timeout in ms */
     int timeout;
+};
+struct underflow_config {
+    int time_thresh; /* underflow check time threshold in ms */
 };
 
 /* Open a new session and create the ID
@@ -423,4 +427,16 @@ int av_sync_get_audio_switch(void *sync,  bool *status);
  *   CLK_RECOVERY_ERR: error happens
  */
 enum  clock_recovery_stat av_sync_get_clock_deviation(void *sync, int32_t *ppm);
+
+/* set underflow detect call back
+ * av sync will callback when a buffer underflow detected when normal play
+ * Params:
+ *   @sync: AV sync module handle
+ *   @cb: callback function
+ *   @priv: callback function parameter
+ *   @cfg: the configuration of the call back, NULL use default value.
+ * Return:
+ *   0 for OK, or error code
+ */
+int av_sync_set_underflow_check_cb(void *sync, underflow_detected cb, void *priv, struct underflow_config *cfg);
 #endif

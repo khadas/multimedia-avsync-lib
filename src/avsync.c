@@ -104,6 +104,11 @@ struct  av_sync_session {
     pts90K pause_pts;
     pause_pts_done pause_pts_cb;
     void *pause_cb_priv;
+    /* underflow */
+    underflow_detected underflow_cb;
+    void *underflow_cb_priv;
+    struct underflow_config underflow_cfg;
+    struct timespec frame_last_update_time;
 
     /* log control */
     uint32_t last_log_syst;
@@ -163,6 +168,7 @@ struct  av_sync_session {
 #define STREAM_DISC_THRES (TIME_UNIT90K / 10)
 #define OUTLIER_MAX_CNT 8
 #define VALID_TS(x) ((x) != -1)
+#define UNDERFLOW_CHECK_THRESH_MS (100)
 
 static uint64_t time_diff (struct timespec *b, struct timespec *a);
 static bool frame_expire(struct av_sync_session* avsync,
@@ -535,7 +541,10 @@ int av_sync_pause(void *sync, bool pause)
     avsync->paused = pause;
     log_info("[%d]paused:%d type:%d rc %d",
         avsync->session_id, pause, avsync->type, rc);
-
+    if (!avsync->paused && avsync->first_frame_toggled) {
+        clock_gettime(CLOCK_MONOTONIC_RAW, &avsync->frame_last_update_time);
+        log_info("[%d] resume update new frame time", avsync->session_id);
+    }
     return rc;
 }
 
@@ -717,6 +726,7 @@ struct vframe *av_sync_pop_frame(void *sync)
             }
             avsync->last_frame = frame;
             avsync->last_pts = frame->pts;
+            clock_gettime(CLOCK_MONOTONIC_RAW, &avsync->frame_last_update_time);
         } else
             break;
     }
@@ -746,6 +756,26 @@ struct vframe *av_sync_pop_frame(void *sync)
 
 exit:
     pthread_mutex_unlock(&avsync->lock);
+
+    /* underflow check */
+    if (avsync->session_started && avsync->first_frame_toggled &&
+        (avsync->paused == false) && (avsync->state >= AV_SYNC_STAT_RUNNING) &&
+        avsync->underflow_cb && peek_item(avsync->frame_q, (void **)&frame, 0))
+    {/* empty queue in normal play */
+        struct timespec now;
+        int diff_ms;
+        clock_gettime(CLOCK_MONOTONIC_RAW, &now);
+        diff_ms = time_diff(&now, &avsync->frame_last_update_time)/1000;
+        if(diff_ms >= (avsync->underflow_cfg.time_thresh
+                       + avsync->vsync_interval*avsync->last_holding_peroid/90)) {
+            log_info ("[%d]underflow detected: %u", avsync->session_id, avsync->last_pts);
+            avsync->underflow_cb (avsync->last_pts,
+                    avsync->underflow_cb_priv);
+            /* update time to control the underflow check call backs */
+            avsync->frame_last_update_time = now;
+        }
+    }
+
     if (avsync->last_frame) {
         if (enter_last_frame != avsync->last_frame)
             log_debug("[%d]pop %u", avsync->session_id, avsync->last_frame->pts);
@@ -1083,6 +1113,26 @@ int av_sync_set_pause_pts_cb(void *sync, pause_pts_done cb, void *priv)
     return 0;
 }
 
+int av_sync_set_underflow_check_cb(void *sync, underflow_detected cb, void *priv, struct underflow_config *cfg)
+{
+    struct av_sync_session *avsync = (struct av_sync_session *)sync;
+
+    if (!avsync)
+      return -1;
+
+    avsync->underflow_cb = cb;
+    avsync->underflow_cb_priv = priv;
+
+    if (cfg)
+        avsync->underflow_cfg.time_thresh = cfg->time_thresh;
+    else
+        avsync->underflow_cfg.time_thresh = UNDERFLOW_CHECK_THRESH_MS;
+
+    log_info("[%d] av_sync_set_underflow_check_cb %p priv %p time %d",
+             avsync->session_id, avsync->underflow_cb, avsync->underflow_cb_priv,
+             avsync->underflow_cfg.time_thresh);
+    return 0;
+}
 static void trigger_audio_start_cb(struct av_sync_session *avsync,
         avs_ascb_reason reason)
 {
