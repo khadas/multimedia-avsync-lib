@@ -18,6 +18,16 @@
 #include "aml_avsync.h"
 #include "msync.h"
 
+enum internal_sync_stat {
+	MSYNC_STAT_INIT,
+	MSYNC_STAT_STARTING,
+	MSYNC_STAT_STARTED,
+	MSYNC_STAT_PAUSED,
+	MSYNC_STAT_TRANSITION,
+	MSYNC_STAT_TRANSITION_V_2_A,
+	MSYNC_STAT_TRANSITION_A_2_V,
+};
+
 int msync_create_session();
 void msync_destory_session(int id);
 
@@ -40,6 +50,7 @@ int msync_session_update_apts(int fd, uint32_t system, uint32_t pts, uint32_t de
 int msync_session_set_audio_stop(int fd);
 int msync_session_set_video_stop(int fd);
 int msync_session_get_stat (int fd, enum sync_mode *mode,
+        enum internal_sync_stat *stat,
         bool *v_active, bool *a_active, bool *v_timeout,
         bool *a_switch, enum src_flag flag);
 bool msync_clock_started(int fd);

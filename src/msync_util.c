@@ -288,6 +288,7 @@ int msync_session_set_video_stop(int fd)
 }
 
 int msync_session_get_stat (int fd, enum sync_mode *mode,
+        enum internal_sync_stat *state,
         bool *v_active, bool *a_active, bool *v_timeout,
         bool *a_switch, enum src_flag flag)
 {
@@ -327,6 +328,8 @@ int msync_session_get_stat (int fd, enum sync_mode *mode,
         *v_timeout = stat.v_timeout;
     if (a_switch)
         *a_switch = stat.audio_switch;
+    if (state)
+        *state = stat.stat;
     return rc;
 }
 
