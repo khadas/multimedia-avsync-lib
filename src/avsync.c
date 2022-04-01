@@ -164,6 +164,7 @@ struct  av_sync_session {
 #define AV_PATTERN_RESET_THRES (TIME_UNIT90K / 10)
 #define SYNC_LOST_PRINT_THRESHOLD 10000000 //10 seconds In micro seconds
 #define LIVE_MODE(m) ((m) == AV_SYNC_MODE_PCR_MASTER || (m) == AV_SYNC_MODE_IPTV)
+#define V_DISC_MODE(mode) (LIVE_MODE(mode) || (mode) == AV_SYNC_MODE_VMASTER)
 
 #define STREAM_DISC_THRES (TIME_UNIT90K / 10)
 #define OUTLIER_MAX_CNT 8
@@ -326,6 +327,8 @@ static void* create_internal(int session_id,
     if (!attach) {
         msync_session_set_mode(avsync->fd, mode);
         avsync->mode = mode;
+        if (avsync->mode == AV_SYNC_MODE_VMASTER)
+            msync_session_set_wall_adj_thres(avsync->fd, avsync->disc_thres_min);
     } else {
         avsync->attached = true;
         if (msync_session_get_mode(avsync->fd, &avsync->mode)) {
@@ -595,6 +598,22 @@ int av_sync_push_frame(void *sync , struct vframe *frame)
     }
 
     if (avsync->last_q_pts != -1) {
+        if (frame->pts != -1 && avsync->mode == AV_SYNC_MODE_VMASTER) {
+            /* Sometimes app will fake PTS for trickplay, video PTS gap
+             * is really big depending on the speed. Have to adjust the
+             * threshold dynamically.
+             */
+            int gap = (int)(frame->pts - avsync->last_q_pts);
+            if (gap > avsync->disc_thres_min) {
+                avsync->disc_thres_min = gap * 6;
+                avsync->disc_thres_max = gap * 20;
+                msync_session_set_wall_adj_thres(avsync->fd, avsync->disc_thres_min);
+                msync_session_set_disc_thres(avsync->session_id,
+                        avsync->disc_thres_min, avsync->disc_thres_max);
+                log_info("[%d] update disc_thres to %d/%d",avsync->session_id,
+                        avsync->disc_thres_min, avsync->disc_thres_max);
+            }
+        }
         if (avsync->last_q_pts == frame->pts && avsync->mode == AV_SYNC_MODE_AMASTER) {
             /* TODO: wrong, should remove from back of queue */
             dqueue_item(avsync->frame_q, (void **)&prev);
@@ -839,8 +858,7 @@ static bool frame_expire(struct av_sync_session* avsync,
     if (next_frame)
         nfpts = next_frame->pts + avsync->extra_delay;
 
-    if (avsync->mode == AV_SYNC_MODE_FREE_RUN ||
-            avsync->mode == AV_SYNC_MODE_VMASTER) {
+    if (avsync->mode == AV_SYNC_MODE_FREE_RUN) {
         /* We need to ensure that the video outputs smoothly,
         so output video frame by frame hold_period */
         if ((abs_diff(systime, fpts) > AV_PATTERN_RESET_THRES) &&
@@ -911,7 +929,7 @@ static bool frame_expire(struct av_sync_session* avsync,
         avsync->phase = 0;
         reset_pattern(avsync->pattern_detector);
 
-        if (LIVE_MODE(avsync->mode) && avsync->last_disc_pts != fpts) {
+        if (V_DISC_MODE(avsync->mode) && avsync->last_disc_pts != fpts) {
             log_info ("[%d]video disc %u --> %u",
                 avsync->session_id, systime, fpts);
             msync_session_set_video_dis(avsync->fd, fpts);
