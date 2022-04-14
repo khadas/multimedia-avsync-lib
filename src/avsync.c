@@ -29,6 +29,7 @@
 #include "msync.h"
 #include <pthread.h>
 #include "pcr_monitor.h"
+#include "aml_version.h"
 
 enum sync_state {
     AV_SYNC_STAT_INIT = 0,
