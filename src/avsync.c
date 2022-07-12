@@ -1449,8 +1449,7 @@ static void handle_mode_change_a(struct av_sync_session* avsync,
 
     if (avsync->active_mode == AV_SYNC_MODE_AMASTER) {
         float speed;
-        if (avsync->start_policy == AV_SYNC_START_ALIGN &&
-                a_active && avsync->audio_start) {
+        if (a_active && avsync->audio_start) {
             if (v_active || v_timeout || avsync->in_audio_switch)
                 trigger_audio_start_cb(avsync, AV_SYNC_ASCB_OK);
         }
