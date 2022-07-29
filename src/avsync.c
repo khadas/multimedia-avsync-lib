@@ -1452,6 +1452,9 @@ static void handle_mode_change_a(struct av_sync_session* avsync,
         if (a_active && avsync->audio_start) {
             if (v_active || v_timeout || avsync->in_audio_switch)
                 trigger_audio_start_cb(avsync, AV_SYNC_ASCB_OK);
+        } else if (!a_active && !avsync->session_started) {
+            /* quit waiting ASAP */
+            trigger_audio_start_cb(avsync, AV_SYNC_ASCB_STOP);
         }
 
         if (!msync_session_get_rate(avsync->fd, &speed)) {
@@ -1822,4 +1825,14 @@ static struct vframe * video_mono_pop_frame(struct av_sync_session *avsync)
     if (avsync->last_frame)
         avsync->last_frame->hold_period++;
     return avsync->last_frame;
+}
+
+int avs_sync_stop_audio(void *sync)
+{
+    struct av_sync_session *avsync = (struct av_sync_session *)sync;
+
+    if (!avsync)
+        return -1;
+
+    return msync_session_stop_audio(avsync->fd);
 }

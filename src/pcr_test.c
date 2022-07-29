@@ -188,7 +188,7 @@ static void * pcr_thread(void * arg)
     while (!quit_pcr_thread) {
         int ret;
 
-        ret = av_sync_set_pcr_clock(pcr_h, PTS_START + i * 4500);
+        ret = av_sync_set_pcr_clock(pcr_h, PTS_START + i * 4500, i * 50000000);
         if (ret)
             log_error("fail");
         log_debug("pcr is %x", PTS_START + i * 4500);

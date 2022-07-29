@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include "aml_avsync.h"
 #include "aml_avsync_log.h"
@@ -30,10 +31,94 @@
 
 static int frame_received;
 static bool audio_can_start;
+static bool audio_cancel_wait;
+static int audio_start(void *priv, avs_ascb_reason reason);
+
+static void * wait_thread(void *para)
+{
+    int session_id = (int)para;
+    void *attach_handle;
+    int count = 0;
+    int ret;
+
+    attach_handle = av_sync_attach(session_id, AV_SYNC_TYPE_AUDIO);
+    if (!attach_handle) {
+        log_error("attach fail");
+        return 0;
+    }
+
+    ret = av_sync_audio_start(attach_handle, PTS_START, 4500, audio_start, NULL);
+
+    if (ret != AV_SYNC_ASTART_ASYNC) {
+        av_sync_destroy(attach_handle);
+        log_error("mode error");
+        return 0;
+    }
+    while (!audio_can_start) {
+        usleep(100000);
+        count++;
+        if (count == 5) {
+          log_info("wait for 500ms, notify trigger");
+          audio_cancel_wait = true;
+        }
+    }
+    return 0;
+}
+
+static void * trigger_thread(void *para)
+{
+    void *handle = para;
+    while (1) {
+       if (audio_cancel_wait) {
+           avs_sync_stop_audio(handle);
+           log_info("trigger quit");
+           return 0;
+       }
+       usleep(100000);
+    }
+    return 0;
+}
+
+static void test_a_cancel_wait()
+{
+    void *handle = NULL;
+    int session, session_id;
+    avs_start_ret ret;
+    pthread_t wait_t, trigger_t;
+
+    session = av_sync_open_session(&session_id);
+    if (session < 0) {
+        log_error("open fail");
+        exit(1);
+    }
+
+    handle = av_sync_create(session_id, AV_SYNC_MODE_AMASTER, AV_SYNC_TYPE_AUDIO, 0);
+    if (!handle) {
+        log_error("create fail");
+        goto exit;
+    }
+
+    /* let it timeout */
+    ret = avs_sync_set_start_policy(handle, AV_SYNC_START_ALIGN);
+    if (ret) {
+      log_error("policy fail");
+      goto exit2;
+    }
+    audio_cancel_wait = false;
+    pthread_create(&wait_t, NULL, wait_thread, (void *)session_id);
+    pthread_create(&trigger_t, NULL, trigger_thread, handle);
+    pthread_join(wait_t, NULL);
+    pthread_join(trigger_t, NULL);
+
+exit2:
+    av_sync_destroy(handle);
+exit:
+    av_sync_close_session(session);
+}
 
 static int audio_start(void *priv, avs_ascb_reason reason)
 {
-    log_info("received");
+    log_info("received reason: %d", reason);
     audio_can_start = true;
     return 0;
 }
@@ -226,6 +311,10 @@ int main(int argc, const char** argv)
     } else if (test_case == 2) {
         log_info("\n----------------audio async start------------\n");
         test_a(false);
+        log_info("\n----------------audio end--------------\n");
+    } else if (test_case == 3) {
+        log_info("\n----------------audio async cancel wait------------\n");
+        test_a_cancel_wait();
         log_info("\n----------------audio end--------------\n");
     }
 

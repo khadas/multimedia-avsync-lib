@@ -63,4 +63,5 @@ int msync_session_set_clock_dev(int fd, int32_t ppm);
 int msync_session_set_wall_adj_thres(int fd, int32_t thres);
 int msync_session_get_disc_thres(int session_id, uint32_t *min, uint32_t *max);
 int msync_session_set_disc_thres(int session_id, uint32_t min, uint32_t max);
+int msync_session_stop_audio(int fd);
 #endif

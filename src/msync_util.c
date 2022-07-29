@@ -505,3 +505,13 @@ int msync_session_set_disc_thres(int session_id, uint32_t min, uint32_t max)
 
     return 0;
 }
+
+int msync_session_stop_audio(int fd)
+{
+    int rc, nouse;
+
+    rc = ioctl(fd, AMSYNCS_IOC_SET_STOP_AUDIO_WAIT, &nouse);
+    if (rc)
+        log_error("session[%d] set stop audio errno:%d", fd, errno);
+    return rc;
+}

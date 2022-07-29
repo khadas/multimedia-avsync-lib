@@ -439,4 +439,14 @@ enum  clock_recovery_stat av_sync_get_clock_deviation(void *sync, int32_t *ppm);
  *   0 for OK, or error code
  */
 int av_sync_set_underflow_check_cb(void *sync, underflow_detected cb, void *priv, struct underflow_config *cfg);
+
+/* Cancel audio waiting.
+ * When AV_SYNC_ASTART_ASYNC blocks a thread, use this API to unblock it.
+ * audio_start_cb will be triggered with AV_SYNC_ASCB_STOP.
+ * Params:
+ *   @sync: AV sync module handle
+ * Return:
+ *   0 for OK, or error code
+ */
+int avs_sync_stop_audio(void *sync);
 #endif

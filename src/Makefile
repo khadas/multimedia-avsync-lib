@@ -21,7 +21,7 @@ $(TARGET): $(OBJ)
 
 $(TEST): $(TARGET) test.c
 	cp $(TARGET) $(STAGING_DIR)/usr/lib/
-	$(CC) $(TARGET_CFLAGS)  -g -D_FILE_OFFSET_BITS=64 -Wall -I$(STAGING_DIR)/usr/include/ -L$(STAGING_DIR)/usr/lib -lamlavsync test.c -o $@
+	$(CC) $(TARGET_CFLAGS)  -g -D_FILE_OFFSET_BITS=64 -Wall -I$(STAGING_DIR)/usr/include/ -L$(STAGING_DIR)/usr/lib -lamlavsync -lpthread test.c -o $@
 
 $(PCR_TEST): $(TARGET) pcr_test.c
 	cp $(TARGET) $(STAGING_DIR)/usr/lib/
