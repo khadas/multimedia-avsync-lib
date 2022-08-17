@@ -341,7 +341,7 @@ static void* create_internal(int session_id,
             log_error("get policy");
             goto err4;
         }
-        if (msync_session_get_stat(avsync->fd, &avsync->active_mode, NULL,
+        if (msync_session_get_stat(avsync->fd, false, &avsync->active_mode, NULL,
                 NULL, NULL, NULL, &avsync->in_audio_switch, SRC_A)) {
             log_error("get state");
             goto err4;
@@ -518,7 +518,7 @@ int av_sync_pause(void *sync, bool pause)
         return -1;
     }
 
-     rc = msync_session_get_stat(avsync->fd, &avsync->active_mode, NULL,
+     rc = msync_session_get_stat(avsync->fd, false, &avsync->active_mode, NULL,
                 &v_active, &a_active, &v_timeout,
                 &avsync->in_audio_switch, SRC_A);
 
@@ -1560,7 +1560,7 @@ static void * poll_thread(void * arg)
             bool v_active, a_active, v_timeout;
             enum internal_sync_stat stat;
 
-            msync_session_get_stat(fd, &avsync->active_mode, &stat,
+            msync_session_get_stat(fd, true, &avsync->active_mode, &stat,
                 &v_active, &a_active, &v_timeout, &avsync->in_audio_switch, sflag);
 
             if (avsync->type == AV_SYNC_TYPE_AUDIO)
@@ -1691,7 +1691,7 @@ int av_sync_set_audio_switch(void *sync,  bool start)
 
     if (!avsync)
         return -1;
-    if (msync_session_get_stat(avsync->fd, &avsync->active_mode, NULL,
+    if (msync_session_get_stat(avsync->fd, false, &avsync->active_mode, NULL,
                 &v_active, &a_active,
                 &v_timeout, &avsync->in_audio_switch, SRC_A)) {
         log_error("[%d] can not get session state",
@@ -1719,7 +1719,7 @@ int av_sync_get_audio_switch(void *sync,  bool *start)
 
     if (!avsync)
         return -1;
-    if (msync_session_get_stat(avsync->fd, &avsync->active_mode, NULL,
+    if (msync_session_get_stat(avsync->fd, false, &avsync->active_mode, NULL,
                 NULL, NULL, NULL, &avsync->in_audio_switch, SRC_A)) {
         log_error("[%d] can not audio seamless switch state",
                 avsync->session_id);

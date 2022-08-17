@@ -72,6 +72,8 @@ struct session_sync_stat {
 	uint32_t flag;
 	/* enum av_sync_stat */
 	uint32_t stat;
+	/* clean poll stat after stat */
+	uint32_t clean_poll;
 };
 
 enum avs_event {
@@ -94,12 +96,12 @@ enum avs_astart_mode {
 };
 
 struct audio_start {
-    /* in first audio pts */
+	/* in first audio pts */
 	uint32_t pts;
-    /* in render delay */
+	/* in render delay */
 	uint32_t delay;
     /* out enum avs_astart_mode */
-    uint32_t mode;
+	uint32_t mode;
 };
 
 struct session_event {

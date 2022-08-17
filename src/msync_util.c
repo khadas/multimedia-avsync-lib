@@ -287,7 +287,8 @@ int msync_session_set_video_stop(int fd)
     return msync_session_set_event(fd, AVS_VIDEO_STOP, 0);
 }
 
-int msync_session_get_stat (int fd, enum sync_mode *mode,
+int msync_session_get_stat (int fd,
+        bool clean_poll, enum sync_mode *mode,
         enum internal_sync_stat *state,
         bool *v_active, bool *a_active, bool *v_timeout,
         bool *a_switch, enum src_flag flag)
@@ -297,6 +298,7 @@ int msync_session_get_stat (int fd, enum sync_mode *mode,
 
     memset(&stat, 0, sizeof(stat));
     stat.flag = flag;
+    stat.clean_poll = clean_poll;
     rc = ioctl(fd, AMSYNCS_IOC_GET_SYNC_STAT, &stat);
     if (rc) {
         log_error("fd[%d] get state errno:%d", fd, errno);
