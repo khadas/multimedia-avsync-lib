@@ -187,6 +187,7 @@ static void trigger_audio_start_cb(struct av_sync_session *avsync,
         avs_ascb_reason reason);
 static struct vframe * video_mono_pop_frame(struct av_sync_session *avsync);
 static int video_mono_push_frame(struct av_sync_session *avsync, struct vframe *frame);
+
 pthread_mutex_t glock = PTHREAD_MUTEX_INITIALIZER;
 
 int av_sync_open_session(int *session_id)
@@ -230,6 +231,14 @@ static void* create_internal(int session_id,
     struct av_sync_session *avsync = NULL;
     char dev_name[20];
     int retry = 10;
+
+    /* debug log level */
+    {
+      const char *env= getenv( "AML_AVSYNC_DEBUG_LEVEL");
+      if ( env ) {
+        log_set_level(atoi(env));
+      }
+    }
 
     log_info("[%d] mode %d type %d", session_id, mode, type);
     avsync = (struct av_sync_session *)calloc(1, sizeof(*avsync));
@@ -353,14 +362,6 @@ static void* create_internal(int session_id,
 
         log_info("[%d]retrieve sync mode %d policy %d",
             session_id, avsync->mode, avsync->start_policy);
-    }
-
-    /* debug log level */
-    {
-      const char *env= getenv( "AML_AVSYNC_DEBUG_LEVEL");
-      if ( env ) {
-        log_set_level(atoi(env));
-      }
     }
 
     return avsync;
@@ -513,6 +514,11 @@ int av_sync_pause(void *sync, bool pause)
         return -1;
     }
 
+    if (avsync->type == AV_SYNC_TYPE_VIDEO && avsync->mode == AV_SYNC_MODE_VIDEO_MONO) {
+        log_warn("ignore pause in video mono mode");
+        return -1;
+    }
+
     if (avsync->mode == AV_SYNC_MODE_PCR_MASTER) {
         log_warn("ignore pause in pcr master mode");
         return -1;
@@ -569,8 +575,9 @@ int av_sync_push_frame(void *sync , struct vframe *frame)
         return -1;
 
     if (avsync->type == AV_SYNC_TYPE_VIDEO &&
-            avsync->mode == AV_SYNC_MODE_VIDEO_MONO)
+            avsync->mode == AV_SYNC_MODE_VIDEO_MONO) {
         return video_mono_push_frame(avsync, frame);
+    }
 
     if (!avsync->frame_q) {
         /* policy should be final now */
