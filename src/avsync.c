@@ -303,7 +303,7 @@ static void* create_internal(int session_id,
 
     if (msync_session_get_disc_thres(session_id,
                 &avsync->disc_thres_min, &avsync->disc_thres_max)) {
-        log_error("fail to get disc thres", dev_name, errno);
+        log_error("dev_name:%s; errno:%d; fail to get disc thres", dev_name, errno);
         avsync->disc_thres_min = AV_DISC_THRES_MIN;
         avsync->disc_thres_max = AV_DISC_THRES_MAX;
     }
@@ -669,9 +669,9 @@ struct vframe *av_sync_pop_frame(void *sync)
     struct vframe *frame = NULL, *enter_last_frame = NULL;
     struct av_sync_session *avsync = (struct av_sync_session *)sync;
     int toggle_cnt = 0;
-    uint32_t systime;
+    uint32_t systime = 0;
     bool pause_pts_reached = false;
-    uint32_t interval;
+    uint32_t interval = 0;
 
     if (avsync->type == AV_SYNC_TYPE_VIDEO &&
             avsync->mode == AV_SYNC_MODE_VIDEO_MONO)
@@ -834,7 +834,7 @@ static inline uint32_t abs_diff(uint32_t a, uint32_t b)
 
 static uint64_t time_diff (struct timespec *b, struct timespec *a)
 {
-    return (b->tv_sec - a->tv_sec)*1000000 + (b->tv_nsec/1000 - a->tv_nsec/1000);
+    return (uint64_t)(b->tv_sec - a->tv_sec)*1000000 + (b->tv_nsec/1000 - a->tv_nsec/1000);
 }
 
 static bool frame_expire(struct av_sync_session* avsync,
@@ -1603,7 +1603,7 @@ int32_t static dmod_get_sfo_dev(struct av_sync_session *avsync)
 
     lseek(fd, 0, SEEK_SET);
 
-    nread = read(fd, buf, sizeof(buf));
+    nread = read(fd, buf, sizeof(buf)-1);
     if (nread <= 0) {
         log_error("read error");
         goto err;
@@ -1769,7 +1769,7 @@ static int video_mono_push_frame(struct av_sync_session *avsync, struct vframe *
 
     ret = queue_item(avsync->frame_q, frame);
     if (ret)
-        log_error("%s queue fail:%d", ret);
+        log_error("queue fail:%d", ret);
     log_debug("[%d]push %llu, QNum=%d", avsync->session_id, frame->mts, queue_size(avsync->frame_q));
     return ret;
 }
@@ -1820,8 +1820,8 @@ static struct vframe * video_mono_pop_frame(struct av_sync_session *avsync)
 
     if (avsync->last_frame) {
         if (enter_last_frame != avsync->last_frame)
-            log_debug("[%d]pop %llu", avsync->session_id, avsync->last_frame->pts);
-        log_trace("[%d]pop=%llu, system=%llu, diff %d(ms), QNum=%d", avsync->session_id,
+            log_debug("[%d]pop %lu", avsync->session_id, avsync->last_frame->pts);
+        log_trace("[%d]pop=%llu, system=%llu, diff %llu(ms), QNum=%d", avsync->session_id,
                 avsync->last_frame->mts,
                 systime, (systime - avsync->last_frame->mts) / 1000000,
                 queue_size(avsync->frame_q));

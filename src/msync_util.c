@@ -356,7 +356,7 @@ int msync_session_set_pcr(int fd, pts90K pts, uint64_t mono_clock)
     pcr.mono_clock = mono_clock;
     rc = ioctl(fd, AMSYNCS_IOC_SET_PCR, &pcr);
     if (rc)
-        log_error("session[%d] set pcr %u errno:%d", fd, pcr, errno);
+        log_error("session[%d] set pcr.pts %u errno:%d", fd, pcr.pts, errno);
 
     return rc;
 }
@@ -368,7 +368,7 @@ int msync_session_get_pcr(int fd, pts90K *pts, uint64_t *mono_clock)
 
     rc = ioctl(fd, AMSYNCS_IOC_GET_PCR, &pcr);
     if (rc)
-        log_error("session[%d] set pcr %u errno:%d", fd, pcr, errno);
+        log_error("session[%d] get pcr.pts %u errno:%d", fd, pcr.pts, errno);
     else {
         *pts = pcr.pts;
         *mono_clock = pcr.mono_clock;
@@ -436,8 +436,7 @@ static int get_sysfs_uint32(const char *path, uint32_t *value)
     fd = open(path, O_RDONLY);
     if (fd >= 0) {
         memset(valstr, 0, 64);
-        read(fd, valstr, 64 - 1);
-        valstr[strnlen(valstr, sizeof(valstr))] = '\0';
+        (void)read(fd, valstr, 64 - 1);
         close(fd);
     } else {
         log_error("unable to open file %s\n", path);
