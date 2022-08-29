@@ -485,7 +485,8 @@ int avs_sync_set_start_policy(void *sync, struct start_policy* st_policy)
     if (!avsync || !avsync->fd)
         return -1;
 
-    log_info("[%d]policy %u --> %u, timeout %d --> %d", avsync->start_policy, st_policy->policy, avsync->timeout, st_policy->timeout);
+    log_info("[%d]policy %u --> %u, timeout %d --> %d", avsync->session_id,
+        avsync->start_policy, st_policy->policy, avsync->timeout, st_policy->timeout);
     if (LIVE_MODE(avsync->mode) &&
         st_policy->policy != AV_SYNC_START_ASAP) {
         log_error("policy %d not supported in live mode", st_policy->policy);

@@ -26,6 +26,12 @@
 #include <string.h>
 #include <time.h>
 #include <sys/time.h>
+#ifdef ENABLE_SYSLOG
+#include <syslog.h>
+#elif ENABLE_LOGCAT
+#define LOG_TAG "avs"
+#include <cutils/log.h>
+#endif
 
 #include "aml_avsync_log.h"
 
@@ -103,6 +109,76 @@ void log_log(int level, const char *file, int line, const char *fmt, ...) {
    clock_gettime( CLOCK_MONOTONIC_RAW, &tm );
    second = tm.tv_sec;
    usec = tm.tv_nsec/1000LL;
+
+#if defined(ENABLE_SYSLOG)
+  {
+    va_list args;
+    int l;
+    char content[512];
+    switch (level) {
+      case AVS_LOG_FATAL:
+        l = LOG_CRIT;
+        break;
+      case AVS_LOG_ERROR:
+        l = LOG_ERR;
+        break;
+      case AVS_LOG_WARN:
+        l = LOG_WARNING;
+        break;
+      case AVS_LOG_INFO:
+        l = LOG_NOTICE;
+        break;
+      case AVS_LOG_DEBUG:
+        l = LOG_INFO;
+        break;
+      case AVS_LOG_TRACE:
+      default:
+        l = LOG_DEBUG;
+        break;
+    }
+    va_start(args, fmt);
+    vsnprintf(content, 512, fmt, args);
+    va_end(args);
+    syslog(l, "[%ld.%06ld]: %-5s %s:%d: %s", second, usec, level_names[level], file, line, content);
+
+    unlock();
+    return;
+  }
+#elif defined(ENABLE_LOGCAT)
+  {
+    va_list args;
+    int l;
+    char content[512];
+    switch (level) {
+      case AVS_LOG_FATAL:
+        l = ANDROID_LOG_ERROR;
+        break;
+      case AVS_LOG_ERROR:
+        l = ANDROID_LOG_ERROR;
+        break;
+      case AVS_LOG_WARN:
+        l = ANDROID_LOG_WARN;
+        break;
+      case AVS_LOG_INFO:
+        l = ANDROID_LOG_INFO;
+        break;
+      case AVS_LOG_DEBUG:
+        l = ANDROID_LOG_DEBUG;
+        break;
+      case AVS_LOG_TRACE:
+      default:
+        l = ANDROID_LOG_VERBOSE;
+        break;
+    }
+    va_start(args, fmt);
+    vsnprintf(content, 512, fmt, args);
+    va_end(args);
+    LOG_PRI(l, LOG_TAG, "[%ld.%06ld]: %-5s %s:%d: %s", second, usec, level_names[level], file, line, content);
+
+    unlock();
+    return;
+  }
+#endif
   /* Log to stderr */
   if (!L.quiet) {
     va_list args;

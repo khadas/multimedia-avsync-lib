@@ -14,18 +14,29 @@ else
 all: $(TARGET)
 endif
 
+CC_FLAG = -Wall
 LD_FLAG = -lm -lpthread
 
+ifeq ($(LOG), LOGCAT)
+$(info use logcat)
+LD_FALG += -llog
+CC_FLAG += -DENABLE_LOGCAT
+endif
+ifeq ($(LOG), SYSLOG)
+$(info use syslog)
+CC_FLAG += -DENABLE_SYSLOG
+endif
+
 $(TARGET): $(OBJ)
-	$(CC) $(TARGET_CFLAGS)  -g -D_FILE_OFFSET_BITS=64 -Wall -I$(STAGING_DIR)/usr/include/ -L$(STAGING_DIR)/usr/lib $(LD_FLAG) $(OBJ) -shared -fPIC -o $@
+	$(CC) $(TARGET_CFLAGS) $(CC_FLAG) -D_FILE_OFFSET_BITS=64 -Wall -I$(STAGING_DIR)/usr/include/ -L$(STAGING_DIR)/usr/lib $(LD_FLAG) $(OBJ) -shared -fPIC -o $@
 
 $(TEST): $(TARGET) test.c
 	cp $(TARGET) $(STAGING_DIR)/usr/lib/
-	$(CC) $(TARGET_CFLAGS)  -g -D_FILE_OFFSET_BITS=64 -Wall -I$(STAGING_DIR)/usr/include/ -L$(STAGING_DIR)/usr/lib -lamlavsync -lpthread test.c -o $@
+	$(CC) $(TARGET_CFLAGS) $(CC_FLAG) -D_FILE_OFFSET_BITS=64 -Wall -I$(STAGING_DIR)/usr/include/ -L$(STAGING_DIR)/usr/lib -lamlavsync test.c -o $@
 
 $(PCR_TEST): $(TARGET) pcr_test.c
 	cp $(TARGET) $(STAGING_DIR)/usr/lib/
-	$(CC) $(TARGET_CFLAGS)  -g -D_FILE_OFFSET_BITS=64 -Wall -I$(STAGING_DIR)/usr/include/ -L$(STAGING_DIR)/usr/lib -lpthread -lamlavsync pcr_test.c -o $@
+	$(CC) $(TARGET_CFLAGS) $(CC_FLAG) -D_FILE_OFFSET_BITS=64 -Wall -I$(STAGING_DIR)/usr/include/ -L$(STAGING_DIR)/usr/lib -lpthread -lamlavsync pcr_test.c -o $@
 
 .PHONY: clean
 

@@ -2,7 +2,7 @@
 
 #export CC BUILD_DIR STAGING_DIR TARGET_DIR
 all:
-	-$(MAKE) -C src all
+	-$(MAKE) -C LOG=$(LOG) src all
 install:
 	-$(MAKE) -C src install
 clean:
