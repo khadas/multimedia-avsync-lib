@@ -510,11 +510,14 @@ int avs_sync_set_start_policy(void *sync, struct start_policy* st_policy)
 
     log_info("[%d]policy %u --> %u, timeout %d --> %d", avsync->session_id,
         avsync->start_policy, st_policy->policy, avsync->timeout, st_policy->timeout);
-    if (LIVE_MODE(avsync->mode) &&
+    if (avsync->mode == AV_SYNC_MODE_IPTV &&
         st_policy->policy != AV_SYNC_START_ASAP) {
         log_error("policy %d not supported in live mode", st_policy->policy);
         return -1;
     }
+
+    if (avsync->mode == AV_SYNC_MODE_PCR_MASTER)
+        msync_session_set_start_thres(avsync->fd, st_policy->timeout);
 
     avsync->start_policy = st_policy->policy;
     avsync->timeout = st_policy->timeout;

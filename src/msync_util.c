@@ -522,3 +522,10 @@ int msync_session_stop_audio(int fd)
         log_error("session[%d] set stop audio errno:%d", fd, errno);
     return rc;
 }
+
+int msync_session_set_start_thres(int fd, uint32_t thres)
+{
+    if (set_sysfs_uint32("/sys/class/aml_msync/start_buf_thres", thres * 90))
+        return -1;
+    return 0;
+}
