@@ -1531,6 +1531,7 @@ static void * poll_thread(void * arg)
     int ret = 0;
     struct av_sync_session *avsync = (struct av_sync_session *)arg;
     const int fd = avsync->fd;
+    int poll_timeout = 10;
     struct pollfd pfd = {
       /* default blocking capture */
       .events =  POLLIN | POLLRDNORM | POLLPRI | POLLOUT | POLLWRNORM,
@@ -1541,25 +1542,31 @@ static void * poll_thread(void * arg)
     prctl (PR_SET_NAME, "avs_poll");
     log_info("[%d]enter", avsync->session_id);
 
-    if (avsync->type == AV_SYNC_TYPE_AUDIO)
+    if (avsync->type == AV_SYNC_TYPE_AUDIO) {
         sflag = SRC_A;
-    else if (avsync->type == AV_SYNC_TYPE_VIDEO)
+    } else if (avsync->type == AV_SYNC_TYPE_VIDEO) {
         sflag = SRC_V;
+        poll_timeout = 100;
+    }
 
     while (!avsync->quit_poll) {
         for (;;) {
-          ret = poll(&pfd, 1, 10);
+          ret = poll(&pfd, 1, poll_timeout);
           if (ret > 0)
               break;
           if (avsync->quit_poll)
               goto exit;
-          if (errno == EINTR)
+          if (errno == EINTR) {
+              log_debug("[%d] poll interrupted", avsync->session_id);
               continue;
+          }
         }
 
         /* error handling */
-        if (pfd.revents & POLLERR)
-            log_error("[%d]POLLERR received", avsync->session_id);
+        if (pfd.revents & POLLERR) {
+            usleep(poll_timeout * 1000);
+            continue;
+        }
 
         /* mode change. Non-exclusive wait so all the processes
          * shall be woken up
@@ -1576,6 +1583,9 @@ static void * poll_thread(void * arg)
             else if (avsync->type == AV_SYNC_TYPE_VIDEO)
                 handle_mode_change_v(avsync, stat, v_active, a_active, v_timeout);
             usleep(10000);
+        } else {
+            log_debug("[%d] unexpected revents %x", avsync->session_id, pfd.revents);
+            usleep(poll_timeout * 1000);
         }
     }
 exit:
