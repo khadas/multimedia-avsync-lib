@@ -9,7 +9,7 @@ echo $BASE
 MAJORVERSION=1
 
 #minor version
-MINORVERSION=1
+MINORVERSION=2
 
 #modue name/
 MODULE_NAME=MM-module-name:avsync-lib
