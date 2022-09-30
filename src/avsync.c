@@ -162,6 +162,7 @@ struct  av_sync_session {
 #define AV_DISC_THRES_MAX (TIME_UNIT90K * 10)
 #define A_ADJ_THREDHOLD_HB (900 * 6) //60ms
 #define A_ADJ_THREDHOLD_LB (900 * 2) //20ms
+#define A_ADJ_THREDHOLD_MB (900 * 3) //30ms
 #define AV_PATTERN_RESET_THRES (TIME_UNIT90K / 10)
 #define SYNC_LOST_PRINT_THRESHOLD 10000000 //10 seconds In micro seconds
 #define LIVE_MODE(m) ((m) == AV_SYNC_MODE_PCR_MASTER || (m) == AV_SYNC_MODE_IPTV)
@@ -286,7 +287,6 @@ static void* create_internal(int session_id,
             log_error("[%d]create queue fail", avsync->session_id);
             goto err2;
         }
-        /* for debugging */
         {
             int ret;
 
@@ -1219,8 +1219,8 @@ avs_start_ret av_sync_audio_start(
         (avsync->audio_switch_state == AUDIO_SWITCH_STAT_RESET ||
          avsync->audio_switch_state == AUDIO_SWITCH_STAT_AGAIN)) {
         msync_session_get_wall(avsync->fd, &systime, NULL);
-        if ((int)(systime - pts) > A_ADJ_THREDHOLD_LB &&
-            start_mode == AVS_START_SYNC) {
+        if ((int)(systime - pts) > A_ADJ_THREDHOLD_LB
+            && start_mode == AVS_START_SYNC) {
             log_info("%d audio_switch audio need drop first.ahead %d ms",
                 avsync->session_id, (int)(systime - pts)/90);
             ret = AV_SYNC_ASTART_AGAIN;
@@ -1231,12 +1231,20 @@ avs_start_ret av_sync_audio_start(
             int diff = (int)(pts - systime);
             log_info("%d audio_switch_state to start mode %d diff %d ms",
                 avsync->session_id, start_mode, diff/90);
-            avsync->audio_switch_state = AUDIO_SWITCH_STAT_START;
             if (diff < A_ADJ_THREDHOLD_LB) {
                 log_info("%d orig mode %d already close enough direct start",
                                avsync->session_id, start_mode);
                 start_mode = AVS_START_SYNC;
+            } else if (start_mode != AVS_START_ASYNC) {
+                log_info("%d drop too far mode %d need to try ASYNC",
+                               avsync->session_id, start_mode);
+                msync_session_set_audio_stop(avsync->fd);
+                if (msync_session_set_audio_start(avsync->fd, pts, delay, &start_mode))
+                    log_error("[%d]fail to set audio start", avsync->session_id);
+                log_info("%d New start mode %d",
+                               avsync->session_id, start_mode);
             }
+            avsync->audio_switch_state = AUDIO_SWITCH_STAT_START;
         }
     }
 
@@ -1309,7 +1317,7 @@ int av_sync_audio_render(
 
     if (avsync->in_audio_switch
          && avsync->audio_switch_state == AUDIO_SWITCH_STAT_START) {
-        if (abs_diff(systime, pts) < A_ADJ_THREDHOLD_HB) {
+        if (abs_diff(systime, pts) < A_ADJ_THREDHOLD_MB) {
            log_info("Audio pts in system range sys %u pts %u\n", systime, pts);
            avsync->audio_switch_state = AUDIO_SWITCH_STAT_FINISH;
            action = AV_SYNC_AA_RENDER;
@@ -1545,17 +1553,18 @@ static void * poll_thread(void * arg)
     int poll_timeout = 10;
     struct pollfd pfd = {
       /* default blocking capture */
-      .events =  POLLIN | POLLRDNORM | POLLPRI | POLLOUT | POLLWRNORM,
+      .events =  POLLPRI,
       .fd = avsync->fd,
     };
     enum src_flag sflag = SRC_A;
 
-    prctl (PR_SET_NAME, "avs_poll");
     log_info("[%d]enter", avsync->session_id);
 
     if (avsync->type == AV_SYNC_TYPE_AUDIO) {
+        prctl (PR_SET_NAME, "avs_apoll");
         sflag = SRC_A;
     } else if (avsync->type == AV_SYNC_TYPE_VIDEO) {
+        prctl (PR_SET_NAME, "avs_vpoll");
         sflag = SRC_V;
         poll_timeout = 100;
     }
@@ -1571,6 +1580,10 @@ static void * poll_thread(void * arg)
               log_debug("[%d] poll interrupted", avsync->session_id);
               continue;
           }
+          if (errno == EAGAIN || errno == ENOMEM) {
+              log_info("[%d] poll error %d", avsync->session_id, errno);
+              continue;
+          }
         }
 
         /* error handling */
@@ -1579,6 +1592,10 @@ static void * poll_thread(void * arg)
             continue;
         }
 
+        if (pfd.revents & POLLNVAL) {
+            log_warn("[%d] fd closed", avsync->session_id);
+            goto exit;
+        }
         /* mode change. Non-exclusive wait so all the processes
          * shall be woken up
          */
