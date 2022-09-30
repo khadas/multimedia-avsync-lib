@@ -435,9 +435,15 @@ static int get_sysfs_uint32(const char *path, uint32_t *value)
 
     fd = open(path, O_RDONLY);
     if (fd >= 0) {
+        ssize_t rn = 0;
         memset(valstr, 0, 64);
-        (void)read(fd, valstr, 64 - 1);
+        rn = read(fd, valstr, 64 - 1);
+        if (rn > 0)
+            valstr[strlen(valstr)] = '\0';
+
         close(fd);
+        if (rn < 0)
+            return -1;
     } else {
         log_error("unable to open file %s\n", path);
         return -1;

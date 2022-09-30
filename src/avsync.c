@@ -280,6 +280,22 @@ static void* create_internal(int session_id,
         avsync->phase_set = false;
         avsync->phase_adjusted = false;
         avsync->first_frame_toggled = false;
+
+        avsync->frame_q = create_q(MAX_FRAME_NUM);
+        if (!avsync->frame_q) {
+            log_error("[%d]create queue fail", avsync->session_id);
+            goto err2;
+        }
+        /* for debugging */
+        {
+            int ret;
+
+            ret = pthread_create(&avsync->poll_thread, NULL, poll_thread, avsync);
+            if (ret) {
+                log_error("[%d]create poll thread errno %d", avsync->session_id, errno);
+                goto err2;
+            }
+        }
     }
 
     avsync->type = type;
@@ -369,9 +385,18 @@ err4:
     if (avsync->pcr_monitor)
         pcr_monitor_destroy(avsync->pcr_monitor);
 err3:
-    close(avsync->fd);
+    if (avsync->fd)
+        close(avsync->fd);
 err2:
-    destroy_pattern_detector(avsync->pattern_detector);
+    avsync->quit_poll = true;
+    if (avsync->poll_thread) {
+        pthread_join(avsync->poll_thread, NULL);
+        avsync->poll_thread = 0;
+    }
+    if (avsync->frame_q)
+        destroy_q(avsync->frame_q);
+    if (avsync->pattern_detector)
+        destroy_pattern_detector(avsync->pattern_detector);
 err:
     free(avsync);
     return NULL;
@@ -580,29 +605,11 @@ int av_sync_push_frame(void *sync , struct vframe *frame)
         return video_mono_push_frame(avsync, frame);
     }
 
-    if (!avsync->frame_q) {
+    if (avsync->state == AV_SYNC_STAT_INIT && !queue_size(avsync->frame_q)) {
         /* policy should be final now */
         if (msync_session_get_start_policy(avsync->fd, &avsync->start_policy, &avsync->timeout)) {
             log_error("[%d]get policy", avsync->session_id);
             return -1;
-        }
-
-        avsync->frame_q = create_q(MAX_FRAME_NUM);
-        if (!avsync->frame_q) {
-            log_error("[%d]create queue fail", avsync->session_id);
-
-            return -1;
-        }
-
-        {
-            int ret;
-
-            ret = pthread_create(&avsync->poll_thread, NULL, poll_thread, avsync);
-            if (ret) {
-                log_error("[%d]create poll thread errno %d", avsync->session_id, errno);
-                destroy_q(avsync->frame_q);
-                return -1;
-            }
         }
     }
 
@@ -656,7 +663,7 @@ int av_sync_push_frame(void *sync , struct vframe *frame)
     if (avsync->state == AV_SYNC_STAT_INIT &&
         queue_size(avsync->frame_q) >= avsync->start_thres) {
         avsync->state = AV_SYNC_STAT_RUNNING;
-        log_info("[%d]state: init --> running", avsync->session_id);
+        log_debug("[%d]state: init --> running", avsync->session_id);
     }
 
     if (ret)
@@ -750,13 +757,15 @@ struct vframe *av_sync_pop_frame(void *sync)
             if (avsync->last_frame) {
                 /* free frame that are not for display */
                 if (toggle_cnt > 1) {
-                    log_debug("[%d]free %u cur %u system/d %u/%u", avsync->session_id,
-                             avsync->last_frame->pts, frame->pts, systime, systime - avsync->last_poptime);
+                    log_info("[%d]free %u cur %u system/d %u/%u queue size %d", avsync->session_id,
+                             avsync->last_frame->pts, frame->pts,
+                             systime, systime - avsync->last_poptime,
+                             queue_size(avsync->frame_q));
                     avsync->last_frame->free(avsync->last_frame);
                 }
             } else {
                 avsync->first_frame_toggled = true;
-                log_info("[%d]first frame %u", avsync->session_id, frame->pts);
+                log_info("[%d]first frame %u queue size %d", avsync->session_id, frame->pts, queue_size(avsync->frame_q));
             }
             avsync->last_frame = frame;
             avsync->last_pts = frame->pts;
@@ -980,7 +989,7 @@ static bool frame_expire(struct av_sync_session* avsync,
     if (abs_diff(systime, fpts) > AV_PATTERN_RESET_THRES &&
             avsync->first_frame_toggled) {
         reset_pattern(avsync->pattern_detector);
-        log_warn("sync pattern reset sys:%u fpts:%u",
+        log_info("sync pattern reset sys:%u fpts:%u",
                     systime, fpts);
     }
 
@@ -1019,7 +1028,7 @@ static bool frame_expire(struct av_sync_session* avsync,
                     (int)(fpts + interval - systime) > 0) {
                 avsync->phase = interval / 2 + fpts - systime;
                 avsync->phase_set = true;
-                log_info("[%d]adjust phase to %d", avsync->session_id, (int)avsync->phase);
+                log_debug("[%d]adjust phase to %d", avsync->session_id, (int)avsync->phase);
             }
         } else if (get_pattern(avsync->pattern_detector) < 0 && !avsync->phase_adjusted) {
             if ((int)(systime - fpts) >= 0 &&
@@ -1035,7 +1044,7 @@ static bool frame_expire(struct av_sync_session* avsync,
             }
         }
         if (avsync->state != AV_SYNC_STAT_SYNC_SETUP)
-            log_info("[%d]sync setup", avsync->session_id);
+            log_info("[%d]sync setup on frame %u", avsync->session_id, fpts);
         avsync->state = AV_SYNC_STAT_SYNC_SETUP;
         avsync->sync_lost_cnt = 0;
     }
