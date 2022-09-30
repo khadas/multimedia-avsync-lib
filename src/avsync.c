@@ -777,15 +777,17 @@ struct vframe *av_sync_pop_frame(void *sync)
     }
 
     if (pause_pts_reached) {
-        if (avsync->pause_pts_cb)
-            avsync->pause_pts_cb(avsync->pause_pts,
-                    avsync->pause_cb_priv);
-
         /* stay in paused until av_sync_pause(false) */
+        uint32_t local_pts = avsync->pause_pts;
         avsync->paused = true;
         log_info ("[%d]reach pause pts: %u",
             avsync->session_id, avsync->pause_pts);
         avsync->pause_pts = AV_SYNC_INVALID_PAUSE_PTS;
+        if (avsync->pause_pts_cb)
+            avsync->pause_pts_cb(local_pts,
+                    avsync->pause_cb_priv);
+        log_info ("[%d] reach pause pts: %u handle done",
+            avsync->session_id, local_pts);
     }
 
 exit:
