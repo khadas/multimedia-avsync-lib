@@ -470,18 +470,16 @@ void av_sync_destroy(void *sync)
         return;
     }
     log_info("[%d]begin type %d", avsync->session_id, avsync->type);
-    if (avsync->state != AV_SYNC_STAT_INIT) {
-        if (avsync->type == AV_SYNC_TYPE_VIDEO)
-            internal_stop(avsync);
+    if (avsync->type == AV_SYNC_TYPE_VIDEO)
+        internal_stop(avsync);
 
-        avsync->quit_poll = true;
-        if (avsync->poll_thread) {
-            pthread_join(avsync->poll_thread, NULL);
-            avsync->poll_thread = 0;
-        }
-        if (avsync->type == AV_SYNC_TYPE_AUDIO)
-            trigger_audio_start_cb(avsync, AV_SYNC_ASCB_STOP);
+    avsync->quit_poll = true;
+    if (avsync->poll_thread) {
+        pthread_join(avsync->poll_thread, NULL);
+        avsync->poll_thread = 0;
     }
+    if (avsync->type == AV_SYNC_TYPE_AUDIO)
+        trigger_audio_start_cb(avsync, AV_SYNC_ASCB_STOP);
 
     if (avsync->session_started) {
         if (avsync->type == AV_SYNC_TYPE_VIDEO)
