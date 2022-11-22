@@ -2,7 +2,7 @@ Major_V=1
 Minor_V=3
 BaseChangeId=I2f5db4c0ff17635c1b9d659e8e03541f2cd3abf0
 
-#V1.2.86 Release Notes
+#V1.2.15 Release Notes
 #Release_ChangeId_V1_1=I2f5db4c0ff17635c1b9d659e8e03541f2cd3abf0
 #support syslog and logcat
 #deal with coverty errors

@@ -11,11 +11,13 @@ MAJORVERSION=1
 #minor version
 MINORVERSION=3
 
+#release version commit id
+RELEASE_COMMIT_ID=d7c4c9c
 #modue name/
 MODULE_NAME=MM-module-name:avsync-lib
 
 #get all commit count
-COMMIT_COUNT=$(git rev-list HEAD --count)
+COMMIT_COUNT=$(git rev-list $RELEASE_COMMIT_ID..HEAD --count)
 echo commit count $COMMIT_COUNT
 
 #get current commit id
