@@ -449,4 +449,14 @@ int av_sync_set_underflow_check_cb(void *sync, underflow_detected cb, void *priv
  *   0 for OK, or error code
  */
 int avs_sync_stop_audio(void *sync);
+
+/* eos from video decoder.
+ * when video decoder eos, use this API to set eos to msync.
+ * Only effect video.
+ * Params:
+ *   @sync: AV sync module handle
+ * Return:
+ *   0 for OK, or error code
+ */
+int avs_sync_set_eos(void *sync);
 #endif
