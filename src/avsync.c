@@ -1194,7 +1194,7 @@ avs_start_ret av_sync_audio_start(
 {
     struct av_sync_session *avsync = (struct av_sync_session *)sync;
     uint32_t start_mode;
-    uint32_t systime;
+    uint32_t systime = 0;
     avs_start_ret ret = AV_SYNC_ASTART_ERR;
     bool create_poll_t = false;
 
@@ -1203,6 +1203,17 @@ avs_start_ret av_sync_audio_start(
 
     log_info("%d av_sync_audio_start pts(ms) %d delay %d ms",
              avsync->session_id, (int)pts/90, (int)delay/90);
+
+    if (avsync->in_audio_switch) {
+        msync_session_get_wall(avsync->fd, &systime, NULL);
+        if (systime == AV_SYNC_INVALID_PTS) {
+                log_info("%d Invalid systime could be paused pts %d ms switch_state %d again",
+                avsync->session_id, (int) pts/90, avsync->audio_switch_state);
+                avsync->audio_switch_state = AUDIO_SWITCH_STAT_RESET;
+                ret = AV_SYNC_ASTART_AGAIN;
+                goto exit;
+        }
+    }
 
     if (avsync->in_audio_switch &&
         avsync->audio_switch_state == AUDIO_SWITCH_STAT_AGAIN)
@@ -1216,7 +1227,6 @@ avs_start_ret av_sync_audio_start(
     if (avsync->in_audio_switch &&
         (avsync->audio_switch_state == AUDIO_SWITCH_STAT_RESET ||
          avsync->audio_switch_state == AUDIO_SWITCH_STAT_AGAIN)) {
-        msync_session_get_wall(avsync->fd, &systime, NULL);
         if ((int)(systime - pts) > A_ADJ_THREDHOLD_LB
             && start_mode == AVS_START_SYNC) {
             log_info("%d audio_switch audio need drop first.ahead %d ms",
