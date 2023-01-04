@@ -1893,3 +1893,20 @@ int avs_sync_stop_audio(void *sync)
 
     return msync_session_stop_audio(avsync->fd);
 }
+
+int avs_sync_set_eos(void *sync)
+{
+    struct av_sync_session *avsync = (struct av_sync_session *)sync;
+
+    if (!avsync)
+        return -1;
+
+    if (avsync->type == AV_SYNC_TYPE_VIDEO) {
+        if (avsync->state == AV_SYNC_STAT_INIT) {
+            avsync->state = AV_SYNC_STAT_RUNNING;
+            log_debug("[%d]eos trigger state change: init --> running", avsync->session_id);
+        }
+    }
+
+    return 0;
+}
