@@ -158,6 +158,7 @@ struct  av_sync_session {
 #define MAX_FRAME_NUM 32
 #define DEFAULT_START_THRESHOLD 2
 #define TIME_UNIT90K    (90000)
+#define DEFAULT_WALL_ADJ_THRES (TIME_UNIT90K / 10) //100ms
 #define AV_DISC_THRES_MIN (TIME_UNIT90K / 3)
 #define AV_DISC_THRES_MAX (TIME_UNIT90K * 10)
 #define A_ADJ_THREDHOLD_HB (900 * 6) //60ms
@@ -1086,14 +1087,12 @@ int av_sync_set_speed(void *sync, float speed)
     avsync->speed = speed;
 
     if (avsync->type == AV_SYNC_TYPE_AUDIO) {
-        if (speed == 1.0) {
-            avsync->mode = avsync->backup_mode;
-            log_info("[%d]audio back to mode %d", avsync->session_id, avsync->mode);
-        } else {
-            avsync->backup_mode = avsync->mode;
-            avsync->mode = AV_SYNC_MODE_FREE_RUN;
-            log_info("[%d]audio to freerun mode", avsync->session_id);
-        }
+        if (speed == 1.0)
+            msync_session_set_wall_adj_thres(avsync->fd, DEFAULT_WALL_ADJ_THRES);
+        else
+            msync_session_set_wall_adj_thres(avsync->fd, avsync->disc_thres_min);
+        log_info("[%d]adjust wall adj threshold to %d", avsync->session_id,
+            (speed == 1.0) ? DEFAULT_WALL_ADJ_THRES : avsync->disc_thres_min);
     }
 
     log_info("session[%d] set rate to %f", avsync->session_id, speed);
@@ -1501,6 +1500,7 @@ static void handle_mode_change_a(struct av_sync_session* avsync,
              */
             if (speed != avsync->speed)
                 log_info("[%d]new rate %f", avsync->session_id, speed);
+#if 0 //don't use freerun for trick mode. Or A/V gap will keep increasing
             if (speed == 1.0) {
                 if (avsync->mode != avsync->backup_mode) {
                     avsync->mode = avsync->backup_mode;
@@ -1511,6 +1511,7 @@ static void handle_mode_change_a(struct av_sync_session* avsync,
                 avsync->mode = AV_SYNC_MODE_FREE_RUN;
                 log_info("[%d]audio to freerun mode", avsync->session_id);
             }
+#endif
             avsync->speed = speed;
         }
     } else if (avsync->active_mode == AV_SYNC_MODE_PCR_MASTER) {
