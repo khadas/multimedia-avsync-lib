@@ -641,11 +641,13 @@ int av_sync_push_frame(void *sync , struct vframe *frame)
         }
         if (avsync->last_q_pts == frame->pts && avsync->mode == AV_SYNC_MODE_AMASTER) {
             /* TODO: wrong, should remove from back of queue */
+            pthread_mutex_lock(&avsync->lock);
             dqueue_item(avsync->frame_q, (void **)&prev);
             if (prev) {
                 prev->free(prev);
                 log_info ("[%d]drop frame with same pts %u", avsync->session_id, frame->pts);
             }
+            pthread_mutex_unlock(&avsync->lock);
         } else if (avsync->fps_cnt < 100) {
             int32_t interval = frame->pts - avsync->last_q_pts;
 
