@@ -14,7 +14,7 @@ else
 all: $(TARGET)
 endif
 
-CC_FLAG = -Wall
+CC_FLAG += -Wall
 LD_FLAG = -lm -lpthread
 
 ifeq ($(LOG), LOGCAT)
