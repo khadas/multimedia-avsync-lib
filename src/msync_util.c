@@ -183,6 +183,28 @@ int msync_session_get_wall(int fd, uint32_t *wall, uint32_t *interval)
     return rc;
 }
 
+int msync_session_get_pts(int fd, pts90K *p_pts, uint64_t *mono_ts, bool is_video)
+{
+    int rc;
+    struct pts_tri pts;
+
+    if (is_video)
+        rc = ioctl(fd, AMSYNCS_IOC_GET_V_TS, &pts);
+    else
+        rc = ioctl(fd, AMSYNCS_IOC_GET_A_TS, &pts);
+
+    if (rc) {
+        log_error("session[%d] get ts errno:%d", fd, errno);
+        return rc;
+    }
+
+    if (p_pts)
+        *p_pts = pts.pts;
+    if (mono_ts)
+        *mono_ts = pts.mono_ts;
+    return rc;
+}
+
 int msync_session_set_video_start(int fd, pts90K pts)
 {
     return msync_session_set_event(fd, AVS_VIDEO_START, pts);
@@ -260,10 +282,17 @@ int msync_session_update_vpts(int fd, uint32_t system, uint32_t pts, uint32_t de
 {
     int rc;
     struct pts_tri ts;
+    struct timespec now;
+    uint64_t mono_ns;
+
+    clock_gettime(CLOCK_MONOTONIC_RAW, &now);
+    mono_ns = now.tv_sec * 1000000000LL + now.tv_nsec;
+    mono_ns += delay / 9 * 100000;
 
     ts.wall_clock = system;
     ts.pts = pts;
     ts.delay = delay;
+    ts.mono_ts = mono_ns;
 
     rc = ioctl(fd, AMSYNCS_IOC_SET_V_TS, &ts);
     if (rc)
@@ -275,10 +304,17 @@ int msync_session_update_apts(int fd, uint32_t system, uint32_t pts, uint32_t de
 {
     int rc;
     struct pts_tri ts;
+    struct timespec now;
+    uint64_t mono_ns;
+
+    clock_gettime(CLOCK_MONOTONIC_RAW, &now);
+    mono_ns = now.tv_sec * 1000000000LL + now.tv_nsec;
+    mono_ns += delay / 9 * 100000;
 
     ts.wall_clock = system;
     ts.pts = pts;
     ts.delay = delay;
+    ts.mono_ts = mono_ns;
 
     rc = ioctl(fd, AMSYNCS_IOC_SET_A_TS, &ts);
     if (rc)

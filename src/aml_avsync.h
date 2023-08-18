@@ -389,6 +389,18 @@ int av_sync_get_pcr_clock(void *sync, pts90K *pts, uint64_t *mono_clock);
  */
 int av_sync_get_clock(void *sync, pts90K *pts);
 
+/* get render position and system mono raw time pair.
+ * pts type depends on sync_type of av_sync_create/av_sync_attach
+ * Params:
+ *   @sync: AV sync module handle
+ *   @pts: last rendered pts
+ *   @mono_clock: CLOCK_MONOTONIC_RAW in nanosecond of the last rendered
+ *                frame. 0 is invalid.
+ * Return:
+ *   0 for OK, or error code
+ */
+int av_sync_get_pos(void *sync, pts90K *pts, uint64_t *mono_clock);
+
 /* set session name for debugging purpose
  * The session name will be listed from /sys/class/aml_msync/list_session
  * Params:

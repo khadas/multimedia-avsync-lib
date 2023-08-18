@@ -833,13 +833,14 @@ exit:
     }
 
     if (avsync->last_frame) {
-        if (enter_last_frame != avsync->last_frame)
+        if (enter_last_frame != avsync->last_frame) {
             log_debug("[%d]pop %u", avsync->session_id, avsync->last_frame->pts);
+            /* don't update vpts for out_lier */
+            if (avsync->last_frame->duration != -1)
+                msync_session_update_vpts(avsync->fd, systime,
+                  avsync->last_frame->pts + avsync->extra_delay, interval * avsync->delay);
+        }
         log_trace("[%d]pop=%u, stc=%u, QNum=%d", avsync->session_id, avsync->last_frame->pts, systime, queue_size(avsync->frame_q));
-        /* don't update vpts for out_lier */
-        if (avsync->last_frame->duration != -1)
-            msync_session_update_vpts(avsync->fd, systime,
-                avsync->last_frame->pts, interval * avsync->delay);
     } else
         if (enter_last_frame != avsync->last_frame)
             log_debug("[%d]pop (nil)", avsync->session_id);
@@ -1470,6 +1471,20 @@ done:
     }
 
     return ret;
+}
+
+int av_sync_get_pos(void *sync, pts90K *pts, uint64_t *mono_clock)
+{
+    struct av_sync_session *avsync = (struct av_sync_session *)sync;
+
+    if (!avsync || !pts)
+        return -1;
+
+    if (avsync->type != AV_SYNC_TYPE_AUDIO &&
+        avsync->type != AV_SYNC_TYPE_VIDEO)
+        return -2;
+    return msync_session_get_pts(avsync->fd, pts,
+        mono_clock, avsync->type == AV_SYNC_TYPE_VIDEO);
 }
 
 int av_sync_get_clock(void *sync, pts90K *pts)
