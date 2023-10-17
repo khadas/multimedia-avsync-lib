@@ -271,7 +271,11 @@ static void* create_internal(int session_id,
     }
 
     if (type == AV_SYNC_TYPE_VIDEO) {
-        avsync->pattern_detector = create_pattern_detector();
+        int32_t interval = 1500;
+
+        if (msync_session_get_vsync_interval(&interval))
+            log_error("read interval error");
+        avsync->pattern_detector = create_pattern_detector(interval);
         if (!avsync->pattern_detector) {
             log_error("pd create fail");
             goto err;
@@ -1065,19 +1069,9 @@ static bool frame_expire(struct av_sync_session* avsync,
 
 static bool pattern_detect(struct av_sync_session* avsync, int cur_period, int last_period)
 {
-    bool ret = false;
     log_trace("[%d]cur_period: %d last_period: %d",
             avsync->session_id, cur_period, last_period);
-    if (detect_pattern(avsync->pattern_detector, AV_SYNC_FRAME_P32, cur_period, last_period))
-        ret = true;
-    if (detect_pattern(avsync->pattern_detector, AV_SYNC_FRAME_P22, cur_period, last_period))
-        ret = true;
-    if (detect_pattern(avsync->pattern_detector, AV_SYNC_FRAME_P41, cur_period, last_period))
-        ret = true;
-    if (detect_pattern(avsync->pattern_detector, AV_SYNC_FRAME_P11, cur_period, last_period))
-        ret = true;
-
-    return ret;
+    return detect_pattern(avsync->pattern_detector, cur_period, last_period);
 }
 
 int av_sync_set_speed(void *sync, float speed)

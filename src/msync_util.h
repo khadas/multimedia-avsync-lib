@@ -76,4 +76,5 @@ int msync_session_get_disc_thres(int session_id, uint32_t *min, uint32_t *max);
 int msync_session_set_disc_thres(int session_id, uint32_t min, uint32_t max);
 int msync_session_stop_audio(int fd);
 int msync_session_set_start_thres(int fd, uint32_t thres);
+int msync_session_get_vsync_interval(int32_t *p);
 #endif

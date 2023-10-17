@@ -21,20 +21,12 @@
 #ifndef AML_AVSYNC_PATTERN_H__
 #define AML_AVSYNC_PATTERN_H__
 
-enum frame_pattern {
-    AV_SYNC_FRAME_P32 = 0,
-    AV_SYNC_FRAME_P22 = 1,
-    AV_SYNC_FRAME_P41 = 2,
-    AV_SYNC_FRAME_P11 = 3,
-    AV_SYNC_FRAME_PMAX,
-};
-
-void* create_pattern_detector();
+void* create_pattern_detector(int vsync_interval);
 void destroy_pattern_detector(void *handle);
 void reset_pattern(void *handle);
-bool detect_pattern(void* handle, enum frame_pattern pattern, int cur_peroid, int last_peroid);
+bool detect_pattern(void* handle, int cur_period, int last_period);
 void correct_pattern(void* handle, pts90K fpts, pts90K npts,
-        int cur_peroid, int last_peroid, pts90K systime,
+        int cur_period, int last_period, pts90K systime,
         pts90K vsync_interval, bool *expire);
 int get_pattern(void* handle);
 #endif

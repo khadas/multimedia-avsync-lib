@@ -31,6 +31,7 @@
 #include "msync_util.h"
 
 #define MSYNC_DEV "/dev/aml_msync"
+#define VOUT_MODE_DEV "/sys/class/aml_msync/vout_mode"
 
 int msync_create_session()
 {
@@ -574,3 +575,25 @@ int msync_session_set_start_thres(int fd, uint32_t thres)
         return -1;
     return 0;
 }
+
+int msync_session_get_vsync_interval(int32_t *p)
+{
+    FILE *fd;
+    int den, num, inter;
+    int ret = -1;
+
+    fd = fopen(VOUT_MODE_DEV, "r");
+    if (!fd) {
+        log_error("unable to open file %s\n", VOUT_MODE_DEV);
+        return -1;
+    }
+
+    if (fscanf(fd, "den %d num %d inc %d\n", &den, &num, &inter) == 3) {
+        *p  = inter;
+        ret = 0;
+    }
+
+    fclose(fd);
+    return ret;
+}
+
