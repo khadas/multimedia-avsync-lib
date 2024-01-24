@@ -970,11 +970,16 @@ static bool frame_expire(struct av_sync_session* avsync,
                 avsync->session_id, systime, fpts);
             msync_session_set_video_dis(avsync->fd, fpts);
             avsync->last_disc_pts = fpts;
+            if (avsync->mode == AV_SYNC_MODE_VMASTER) {
+                systime = fpts;
+                avsync->last_r_syst = -1;
+            }
         }
 
         if ((int)(systime - fpts) > 0) {
             if ((int)(systime - fpts) < avsync->disc_thres_max) {
                 /* catch up PCR */
+                avsync->last_r_syst = -1;
                 return true;
             } else {
                 /* render according to FPS */
