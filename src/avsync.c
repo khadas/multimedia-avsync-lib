@@ -719,7 +719,8 @@ struct vframe *av_sync_pop_frame(void *sync)
         pts = frame->pts - avsync->delay * interval;
         msync_session_set_video_start(avsync->fd, pts);
         avsync->session_started = true;
-        log_info("[%d]video start %u", avsync->session_id, pts);
+        log_info("[%d]video start %u frame %u sys %u",
+            avsync->session_id, pts, frame->pts, systime);
     }
 
     if (avsync->start_policy == AV_SYNC_START_ALIGN &&
@@ -772,13 +773,18 @@ struct vframe *av_sync_pop_frame(void *sync)
 
             dqueue_item(avsync->frame_q, (void **)&frame);
             if (avsync->last_frame) {
+                int qsize = queue_size(avsync->frame_q);
+
                 /* free frame that are not for display */
                 if (toggle_cnt > 1) {
                     log_info("[%d]free %u cur %u system/d %u/%u queue size %d", avsync->session_id,
                              avsync->last_frame->pts, frame->pts,
                              systime, systime - avsync->last_poptime,
-                             queue_size(avsync->frame_q));
+                             qsize);
                     avsync->last_frame->free(avsync->last_frame);
+                }
+                if (avsync->mode == AV_SYNC_MODE_PCR_MASTER && qsize <= 1) {
+                    msync_session_set_video_dis(avsync->fd, frame->pts);
                 }
             } else {
                 avsync->first_frame_toggled = true;
@@ -1198,6 +1204,23 @@ static void trigger_audio_start_cb(struct av_sync_session *avsync,
     }
 }
 
+static int update_pcr_master_disc_thres(struct av_sync_session * avsync, pts90K pts)
+{
+  pts90K pcr = -1;
+
+  if (!msync_session_get_pcr(avsync->fd, &pcr, NULL) && pcr != -1) {
+      pts90K delta = abs_diff(pcr, pts);
+
+      if (delta * 3 > avsync->disc_thres_min)
+          avsync->disc_thres_min = 3 * delta;
+
+      log_info("%d update disc_thres_min to %u delta %u",
+          avsync->session_id, avsync->disc_thres_min, delta);
+      return 0;
+  }
+  return -1;
+}
+
 avs_start_ret av_sync_audio_start(
     void *sync,
     pts90K pts,
@@ -1273,13 +1296,23 @@ avs_start_ret av_sync_audio_start(
         ret = AV_SYNC_ASTART_SYNC;
         avsync->session_started = true;
         avsync->state = AV_SYNC_STAT_RUNNING;
+
+        /* for DTG stream, initial delta between apts and pcr is big */
+        if (avsync->mode == AV_SYNC_MODE_PCR_MASTER)
+            update_pcr_master_disc_thres(avsync, pts);
+
     } else if (start_mode == AVS_START_ASYNC) {
         ret = AV_SYNC_ASTART_ASYNC;
         avsync->state = AV_SYNC_STAT_RUNNING;
+
+        /* for DTG stream, initial delta between apts and pcr is big */
+        if (avsync->mode == AV_SYNC_MODE_PCR_MASTER)
+          update_pcr_master_disc_thres(avsync, pts);
     } else if (start_mode == AVS_START_AGAIN) {
         ret = AV_SYNC_ASTART_AGAIN;
     }
 
+    avsync->last_pts = pts;
     if (ret == AV_SYNC_ASTART_AGAIN)
         goto exit;
 
@@ -1332,6 +1365,7 @@ int av_sync_audio_render(
         return -1;
 
     msync_session_get_wall(avsync->fd, &systime, NULL);
+    avsync->last_pts = pts;
 
     log_trace("audio render pts %u, systime %u, mode %u diff ms %d",
          pts, systime, avsync->mode, (int)(pts-systime)/90);
@@ -1542,6 +1576,14 @@ static void handle_mode_change_a(struct av_sync_session* avsync,
         }
     } else if (avsync->active_mode == AV_SYNC_MODE_PCR_MASTER) {
         struct session_debug debug;
+
+        if (a_active && avsync->audio_start) {
+            if (v_active || v_timeout) {
+                log_info("audio start cb");
+                trigger_audio_start_cb(avsync, AV_SYNC_ASCB_OK);
+            }
+        }
+
         if (!msync_session_get_debug_mode(avsync->fd, &debug)) {
             if (debug.debug_freerun && !avsync->debug_freerun) {
                 avsync->backup_mode = avsync->mode;

@@ -417,7 +417,8 @@ int msync_session_get_pcr(int fd, pts90K *pts, uint64_t *mono_clock)
         log_error("session[%d] get pcr.pts %u errno:%d", fd, pcr.pts, errno);
     else {
         *pts = pcr.pts;
-        *mono_clock = pcr.mono_clock;
+        if (mono_clock)
+            *mono_clock = pcr.mono_clock;
     }
 
     return rc;
