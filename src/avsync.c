@@ -365,7 +365,9 @@ static void* create_internal(int session_id,
     if (!attach) {
         msync_session_set_mode(avsync->fd, mode);
         avsync->mode = mode;
-        if (avsync->mode == AV_SYNC_MODE_VMASTER)
+        if ((avsync->mode == AV_SYNC_MODE_VMASTER ||
+            avsync->mode == AV_SYNC_MODE_IPTV) &&
+            avsync->type == AV_SYNC_TYPE_VIDEO)
             msync_session_set_wall_adj_thres(avsync->fd, avsync->disc_thres_min);
     } else {
         avsync->attached = true;
@@ -1366,7 +1368,8 @@ int av_sync_audio_render(
     }
 
     if (avsync->mode == AV_SYNC_MODE_FREE_RUN ||
-            avsync->mode == AV_SYNC_MODE_AMASTER) {
+            avsync->mode == AV_SYNC_MODE_AMASTER ||
+            avsync->active_mode == AV_SYNC_MODE_AMASTER) {
         action = AV_SYNC_AA_RENDER;
         goto done;
     }
@@ -1554,6 +1557,13 @@ static void handle_mode_change_a(struct av_sync_session* avsync,
         }
     } else if (avsync->active_mode == AV_SYNC_MODE_VMASTER) {
         log_info("[%d]running in vmaster mode", avsync->session_id);
+        if (a_active && avsync->audio_start) {
+            if (v_active || v_timeout) {
+                log_info("audio start cb");
+                trigger_audio_start_cb(avsync, AV_SYNC_ASCB_OK);
+            }
+        }
+
     }
 }
 
