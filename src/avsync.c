@@ -885,6 +885,9 @@ static bool frame_expire(struct av_sync_session* avsync,
     bool expire = false;
     uint32_t pts_correction = avsync->delay * interval;
 
+    if (!VALID_TS(systime))
+        return false;
+
     if (avsync->paused && avsync->pause_pts == AV_SYNC_INVALID_PAUSE_PTS)
         return false;
 
