@@ -1135,6 +1135,29 @@ int av_sync_change_mode(void *sync, enum sync_mode mode)
     return 0;
 }
 
+int av_sync_change_mode_by_id(int id, enum sync_mode mode)
+{
+    int fd;
+    char dev_name[20];
+
+    snprintf(dev_name, sizeof(dev_name), "/dev/%s%d", SESSION_DEV, id);
+    fd = open(dev_name, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) {
+        log_error("open %s errno %d", dev_name, errno);
+        return -1;
+    }
+
+    if (msync_session_set_mode(fd, mode)) {
+        log_error("[%d]fail to set mode %d", id, mode);
+        close(fd);
+        return -1;
+    }
+
+    close(fd);
+    log_info("session[%d] set mode %d", id, mode);
+    return 0;
+}
+
 int av_sync_get_mode(void *sync, enum sync_mode *mode)
 {
     struct av_sync_session *avsync = (struct av_sync_session *)sync;
@@ -1563,19 +1586,16 @@ static void handle_mode_change_a(struct av_sync_session* avsync,
              */
             if (speed != avsync->speed)
                 log_info("[%d]new rate %f", avsync->session_id, speed);
-#if 0 //don't use freerun for trick mode. Or A/V gap will keep increasing
-            if (speed == 1.0) {
-                if (avsync->mode != avsync->backup_mode) {
-                    avsync->mode = avsync->backup_mode;
-                    log_info("[%d]audio back to mode %d", avsync->session_id, avsync->mode);
-                }
-            } else {
-                avsync->backup_mode = avsync->mode;
-                avsync->mode = AV_SYNC_MODE_FREE_RUN;
-                log_info("[%d]audio to freerun mode", avsync->session_id);
-            }
-#endif
             avsync->speed = speed;
+        }
+    } else if (avsync->mode == AV_SYNC_MODE_PCR_MASTER &&
+        avsync->active_mode == AV_SYNC_MODE_FREE_RUN) {
+        /* pcr master stopping procedure */
+        if (a_active && avsync->audio_start) {
+            if (v_active || v_timeout) {
+                log_info("audio start cb");
+                trigger_audio_start_cb(avsync, AV_SYNC_ASCB_OK);
+            }
         }
     } else if (avsync->active_mode == AV_SYNC_MODE_PCR_MASTER) {
         struct session_debug debug;

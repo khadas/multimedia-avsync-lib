@@ -321,6 +321,17 @@ int av_sync_set_speed(void *sync, float speed);
  */
 int av_sync_change_mode(void *sync, enum sync_mode mode);
 
+/* switch avsync mode by session id
+ * For Ad audio, it won't create avsync session, mode can be changed
+ * by session id.
+ * Params:
+ *   @sync: AV sync module handle
+ *   @sync_mode: new mode
+ * Return:
+ *   0 for OK, or error code
+ */
+int av_sync_change_mode_by_id(int id, enum sync_mode mode);
+
 /* get avsync mode
  * Params:
  *   @sync: AV sync module handle
