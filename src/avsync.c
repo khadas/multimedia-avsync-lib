@@ -328,6 +328,7 @@ static void* create_internal(int session_id,
     avsync->fps_interval = -1;
     avsync->last_r_syst = -1;
     avsync->timeout = -1;
+    avsync->apts = AV_SYNC_INVALID_PTS;
 
     if (msync_session_get_disc_thres(session_id,
                 &avsync->disc_thres_min, &avsync->disc_thres_max)) {
@@ -783,9 +784,6 @@ struct vframe *av_sync_pop_frame(void *sync)
                              qsize);
                     avsync->last_frame->free(avsync->last_frame);
                 }
-                if (avsync->mode == AV_SYNC_MODE_PCR_MASTER && qsize <= 1) {
-                    msync_session_set_video_dis(avsync->fd, frame->pts);
-                }
             } else {
                 avsync->first_frame_toggled = true;
                 log_info("[%d]first frame %u queue size %d", avsync->session_id, frame->pts, queue_size(avsync->frame_q));
@@ -882,6 +880,7 @@ static bool frame_expire(struct av_sync_session* avsync,
 {
     uint32_t fpts = frame->pts + avsync->extra_delay;
     uint32_t nfpts = -1;
+    uint32_t last_pts = avsync->last_pts;
     bool expire = false;
     uint32_t pts_correction = avsync->delay * interval;
 
@@ -958,8 +957,8 @@ static bool frame_expire(struct av_sync_session* avsync,
 
         if (avsync->state == AV_SYNC_STAT_SYNC_SETUP &&
                 LIVE_MODE(avsync->mode) &&
-                VALID_TS(avsync->last_pts) &&
-                abs_diff(avsync->last_pts, fpts) > STREAM_DISC_THRES) {
+                VALID_TS(last_pts) &&
+                abs_diff(last_pts, fpts) > STREAM_DISC_THRES) {
             /* outlier by stream error */
             avsync->outlier_cnt++;
             frame->duration = -1;
@@ -1383,6 +1382,7 @@ int av_sync_audio_render(
 {
     int ret = 0;
     bool out_lier = false;
+    bool send_disc = false;
     uint32_t systime;
     struct av_sync_session *avsync = (struct av_sync_session *)sync;
     avs_audio_action action = AA_SYNC_AA_MAX;
@@ -1434,29 +1434,26 @@ int av_sync_audio_render(
         goto done;
     }
 
-    if (avsync->state == AV_SYNC_STAT_SYNC_SETUP &&
-            LIVE_MODE(avsync->mode) &&
-            abs_diff(systime, pts) > STREAM_DISC_THRES) {
+    if (LIVE_MODE(avsync->mode) &&
+            VALID_TS(avsync->apts) &&
+            abs_diff(avsync->apts, pts) > STREAM_DISC_THRES) {
         /* outlier by stream error */
         avsync->outlier_cnt++;
         if (avsync->outlier_cnt > OUTLIER_MAX_CNT) {
-            /* treat as disc, just drop current frame */
-            avsync->state = AV_SYNC_STAT_SYNC_LOST;
-            avsync->outlier_cnt = 0;
-            action = AV_SYNC_AA_DROP;
-            systime = pts;
+            /* treat as disc */
+            send_disc = true;
+        } else {
+            log_info("[%d]ignore outlier %u vs %u sys %u", avsync->session_id, pts, avsync->apts, systime);
+            pts = systime;
+            action = AV_SYNC_AA_RENDER;
+            out_lier = true;
             goto done;
         }
-        log_info("[%d]ignore outlier %u", avsync->session_id, pts);
-        pts = systime;
-        action = AV_SYNC_AA_RENDER;
-        out_lier = true;
-        goto done;
     }
 
-    avsync->outlier_cnt = 0;
     /* low bound from sync_lost to sync_setup */
     if (abs_diff(systime, pts) < A_ADJ_THREDHOLD_LB) {
+        avsync->outlier_cnt = 0;
         avsync->state = AV_SYNC_STAT_SYNC_SETUP;
         action = AV_SYNC_AA_RENDER;
         goto done;
@@ -1465,6 +1462,7 @@ int av_sync_audio_render(
     /* high bound of sync_setup */
     if (abs_diff(systime, pts) < A_ADJ_THREDHOLD_HB &&
             avsync->state != AV_SYNC_STAT_SYNC_LOST) {
+        avsync->outlier_cnt = 0;
         avsync->state = AV_SYNC_STAT_SYNC_SETUP;
         action = AV_SYNC_AA_RENDER;
         goto done;
@@ -1486,7 +1484,8 @@ done:
     policy->action = action;
     policy->delta = (int)(systime - pts);
     if (action == AV_SYNC_AA_RENDER) {
-        avsync->apts = pts;
+        if (!out_lier)
+            avsync->apts = pts;
         if (!avsync->in_audio_switch) {
             if (!out_lier)
                 msync_session_update_apts(avsync->fd, systime, pts, 0);
@@ -1505,9 +1504,9 @@ done:
         }
         avsync->audio_drop_cnt = 0;
     } else {
-        if (abs_diff(systime, pts) > avsync->disc_thres_min &&
-                    avsync->last_disc_pts != pts &&
-                    !avsync->in_audio_switch) {
+        if (!avsync->in_audio_switch && avsync->last_disc_pts != pts &&
+             (abs_diff(systime, pts) > avsync->disc_thres_min ||
+              (action == AV_SYNC_AA_INSERT && send_disc))) {
             log_info ("[%d]audio disc %u --> %u",
                     avsync->session_id, systime, pts);
             msync_session_set_audio_dis(avsync->fd, pts);
@@ -1515,6 +1514,7 @@ done:
         } else if (action == AV_SYNC_AA_DROP) {
             struct timespec now;
 
+            avsync->apts = pts;
             /* dropping recovery */
             clock_gettime(CLOCK_MONOTONIC_RAW, &now);
             if (!avsync->audio_drop_cnt)
